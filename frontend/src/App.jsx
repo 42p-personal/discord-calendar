@@ -4,6 +4,7 @@ import { DEFAULT_ACTIVITIES, MONTHS, DAYS, buildTheme, uid, isoDate, getMonthMet
 import AuthScreen       from './components/AuthScreen.jsx';
 import ActivityManager  from './components/ActivityManager.jsx';
 import EventPopover     from './components/EventPopover.jsx';
+import TimePickerModal  from './components/TimePickerModal.jsx';
 
 // ─── helper: convert flat events array from API into { dateKey: [events] } ───
 function indexEvents(arr) {
@@ -41,6 +42,9 @@ export default function App() {
 
   // ── event popover ─────────────────────────────────────────────
   const [popover, setPopover] = useState(null);
+
+  // ── time picker modal (shown on activity drop) ────────────────
+  const [timePicker, setTimePicker] = useState(null); // { activity, dateKey }
 
   const today = new Date();
   const T     = buildTheme(darkMode);
@@ -88,26 +92,13 @@ export default function App() {
     setDragOver(null);
 
     if (dragActivity) {
-      const ev = {
-        id:                uid(),
-        activityId:        dragActivity.id,
-        activityName:      dragActivity.name,
-        activityColor:     dragActivity.color,
-        activityIcon:      dragActivity.icon,
-        date:              dateKey,
-        proposedBy:        currentUser.id,
-        proposedByName:    currentUser.name,
-        proposedByUsername:currentUser.username,
-        createdAt:         Date.now(),
-      };
-      try {
-        const saved = await api.events.create(ev);
-        setEvents((prev) => ({ ...prev, [dateKey]: [...(prev[dateKey] ?? []), saved] }));
-      } catch (err) {
-        console.error('Failed to save event:', err.message);
-      }
+      // Show time picker before saving
+      setTimePicker({ activity: dragActivity, dateKey });
+      setDragActivity(null); setDragEvent(null); setDraggingFrom(null);
+      return;
+    }
 
-    } else if (dragEvent && draggingFrom && draggingFrom !== dateKey) {
+    if (dragEvent && draggingFrom && draggingFrom !== dateKey) {
       try {
         await api.events.move(dragEvent.id, dateKey);
         setEvents((prev) => {
@@ -125,6 +116,35 @@ export default function App() {
     setDragActivity(null); setDragEvent(null); setDraggingFrom(null);
   }
 
+  // Called when the time picker confirms
+  async function handleTimePickerConfirm({ startTime, endTime }) {
+    if (!timePicker) return;
+    const { activity, dateKey } = timePicker;
+    setTimePicker(null);
+
+    const ev = {
+      id:                 uid(),
+      activityId:         activity.id,
+      activityName:       activity.name,
+      activityColor:      activity.color,
+      activityIcon:       activity.icon,
+      date:               dateKey,
+      startTime:          startTime || null,
+      endTime:            endTime   || null,
+      proposedBy:         currentUser.id,
+      proposedByName:     currentUser.name,
+      proposedByUsername: currentUser.username,
+      attendees:          [],
+      createdAt:          Date.now(),
+    };
+    try {
+      const saved = await api.events.create(ev);
+      setEvents((prev) => ({ ...prev, [dateKey]: [...(prev[dateKey] ?? []), saved] }));
+    } catch (err) {
+      console.error('Failed to save event:', err.message);
+    }
+  }
+
   async function removeEvent(dateKey, evId) {
     try {
       await api.events.remove(evId);
@@ -138,6 +158,16 @@ export default function App() {
     } catch (err) {
       console.error('Failed to remove event:', err.message);
     }
+  }
+
+  function handleAttendeesChange(evId, newAttendees) {
+    setEvents((prev) => {
+      const next = {};
+      for (const [k, evs] of Object.entries(prev)) {
+        next[k] = evs.map(e => e.id === evId ? { ...e, attendees: newAttendees } : e);
+      }
+      return next;
+    });
   }
 
   // ── activity mutations ────────────────────────────────────────
@@ -579,6 +609,19 @@ export default function App() {
           T={T}
           onClose={() => setPopover(null)}
           onRemove={removeEvent}
+          onAttendeesChange={handleAttendeesChange}
+        />
+      )}
+
+      {/* ── Time picker modal ── */}
+      {timePicker && (
+        <TimePickerModal
+          activity={timePicker.activity}
+          dateKey={timePicker.dateKey}
+          darkMode={darkMode}
+          T={T}
+          onConfirm={handleTimePickerConfirm}
+          onCancel={() => { setTimePicker(null); setDragActivity(null); setDragEvent(null); setDraggingFrom(null); }}
         />
       )}
     </div>
