@@ -279,6 +279,7 @@ export default function App() {
   if (appState === 'auth') {
     return (
       <AuthScreen
+        apiUrl={import.meta.env.VITE_API_URL ?? ''}
         onAuthenticated={(user) => {
           setCurrentUser(user);
           // Reload data after sign-in
