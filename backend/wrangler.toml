@@ -6,8 +6,3 @@ workers_dev = true
 
 [build]
 command = ""
-
-routes = [
-  { pattern = "api.42p.uk", custom_domain = true }
-]
- 
