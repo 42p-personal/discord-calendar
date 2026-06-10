@@ -8,10 +8,10 @@
   },
   "scripts": {
     "deploy": "wrangler deploy",
-    "dev":    "wrangler dev",
-    "tail":   "wrangler tail"
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
   },
   "devDependencies": {
-    "wrangler": "^3.78.0"
+    "wrangler": "^4.99.0"
   }
 }
