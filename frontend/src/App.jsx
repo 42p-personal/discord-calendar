@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from './api.js';
 import { DEFAULT_ACTIVITIES, MONTHS, DAYS, buildTheme, uid, isoDate, getMonthMeta } from './constants.js';
 import AuthScreen       from './components/AuthScreen.jsx';
-import ActivityManager  from './components/ActivityManager.jsx';
+import ActivityManager, { ActivityIcon } from './components/ActivityManager.jsx';
 import EventPopover     from './components/EventPopover.jsx';
 import TimePickerModal  from './components/TimePickerModal.jsx';
 
@@ -284,7 +284,7 @@ export default function App() {
         cursor: 'pointer', userSelect: 'none',
       }}
     >
-      <span style={{ fontSize: compact ? 9 : 13 }}>{ev.activityIcon}</span>
+      <ActivityIcon icon={ev.activityIcon} size={compact ? 10 : 13} />
       <span style={{ fontSize: compact ? 9 : 11, color: T.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {ev.activityName}
       </span>
@@ -403,7 +403,7 @@ export default function App() {
                 onDragStart={() => startDragActivity(act)}
                 style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 9px', flex: 1, cursor: 'grab', userSelect: 'none', minWidth: 0 }}
               >
-                <span style={{ fontSize: 14, lineHeight: 1 }}>{act.icon}</span>
+                <ActivityIcon icon={act.icon} size={16} />
                 <span style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{act.name}</span>
               </div>
               <button
@@ -582,7 +582,7 @@ export default function App() {
                           onClick={(e) => { const rect = e.currentTarget.getBoundingClientRect(); setPopover((p) => p?.ev?.id === ev.id ? null : { ev, rect }); }}
                           style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 10, background: ev.activityColor + '18', border: `0.5px solid ${ev.activityColor}55`, cursor: 'pointer', userSelect: 'none' }}
                         >
-                          <span style={{ fontSize: 24 }}>{ev.activityIcon}</span>
+                          <span style={{ fontSize: 24 }}><ActivityIcon icon={ev.activityIcon} size={24} /></span>
                           <div style={{ flex: 1 }}>
                             <p style={{ fontWeight: 600, fontSize: 14 }}>{ev.activityName}</p>
                             <p style={{ fontSize: 12, color: T.textSub, marginTop: 2 }}>Suggested by {ev.proposedByName} (@{ev.proposedByUsername})</p>

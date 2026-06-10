@@ -1,3 +1,5 @@
+import { ActivityIcon } from './ActivityManager.jsx';
+
 /**
  * TimePickerModal
  * Shown when an activity is dropped onto a day.
@@ -58,7 +60,7 @@ export default function TimePickerModal({ activity, dateKey, darkMode, T, onConf
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 20, flexShrink: 0,
           }}>
-            {activity.icon}
+            <ActivityIcon icon={activity.icon} size={20} />
           </div>
           <div>
             <p style={{ margin: 0, fontWeight: 600, fontSize: 15, color: T.text }}>{activity.name}</p>
