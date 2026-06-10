@@ -9,13 +9,48 @@ function DiscordLogo({ size = 24 }) {
   );
 }
 
+/* Sleek slanted 42p logo */
+function Logo42p({ size = 64 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+      style={{ transform: 'rotate(-8deg)', filter: 'drop-shadow(0 4px 16px #7c3aed88)' }}>
+      {/* Background pill */}
+      <rect x="2" y="2" width="60" height="60" rx="18" fill="url(#g1)"/>
+      {/* Subtle inner glow ring */}
+      <rect x="2" y="2" width="60" height="60" rx="18" stroke="url(#g2)" strokeWidth="1.5" fill="none"/>
+      {/* "4" */}
+      <text x="4" y="44" fontFamily="'Arial Black', Arial, sans-serif" fontWeight="900"
+        fontSize="34" fill="#ffffff" letterSpacing="-2">4</text>
+      {/* "2" */}
+      <text x="26" y="44" fontFamily="'Arial Black', Arial, sans-serif" fontWeight="900"
+        fontSize="34" fill="url(#g3)" letterSpacing="-2">2</text>
+      {/* "p" — smaller, bottom right, accent colour */}
+      <text x="46" y="52" fontFamily="'Arial Black', Arial, sans-serif" fontWeight="900"
+        fontSize="20" fill="#c4b5fd">p</text>
+      <defs>
+        <linearGradient id="g1" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#4c1d95"/>
+          <stop offset="100%" stopColor="#7c3aed"/>
+        </linearGradient>
+        <linearGradient id="g2" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.6"/>
+          <stop offset="100%" stopColor="#7c3aed" stopOpacity="0"/>
+        </linearGradient>
+        <linearGradient id="g3" x1="26" y1="10" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#e9d5ff"/>
+          <stop offset="100%" stopColor="#a78bfa"/>
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
 export default function AuthScreen({ onAuthenticated, apiUrl }) {
   const [error, setError] = useState('');
   const [busy,  setBusy]  = useState(false);
 
-  // Handle Discord OAuth callback
   useEffect(() => {
-    const params    = new URLSearchParams(window.location.search);
+    const params     = new URLSearchParams(window.location.search);
     const authResult = params.get('auth');
     const authError  = params.get('auth_error');
 
@@ -24,10 +59,7 @@ export default function AuthScreen({ onAuthenticated, apiUrl }) {
       setBusy(true);
       api.auth.me()
         .then(user => onAuthenticated(user))
-        .catch(() => {
-          setBusy(false);
-          setError('Sign-in succeeded but session could not be loaded. Please try again.');
-        });
+        .catch(() => { setBusy(false); setError('Sign-in succeeded but session could not be loaded. Please try again.'); });
     }
 
     if (authError) {
@@ -49,39 +81,51 @@ export default function AuthScreen({ onAuthenticated, apiUrl }) {
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#111318',
+      background: 'radial-gradient(ellipse at 60% 20%, #2e1065 0%, #111318 60%)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       padding: '2rem 1rem',
     }}>
-      <div style={{ width: '100%', maxWidth: 400 }}>
+      <div style={{ width: '100%', maxWidth: 420 }}>
 
-        {/* Logo */}
+        {/* Logo + title */}
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            width: 64, height: 64, borderRadius: 18,
-            background: '#6366f1', marginBottom: 16,
-            boxShadow: '0 8px 32px #6366f166',
-          }}>
-            <i className="ti ti-calendar-event" style={{ fontSize: 32, color: '#fff' }} aria-hidden="true" />
+          <div style={{ display: 'inline-block', marginBottom: 18 }}>
+            <Logo42p size={72} />
           </div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: '#e8e9f3', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
-            Discord Calendar
+
+          <h1 style={{
+            fontSize: 28,
+            fontWeight: 900,
+            color: '#f5f3ff',
+            margin: '0 0 8px',
+            letterSpacing: '-0.03em',
+            lineHeight: 1.1,
+          }}>
+            Discord Games Calendar
           </h1>
-          <p style={{ fontSize: 14, color: '#8b8ca8', margin: 0 }}>
-            Plan events with your friends
+
+          <p style={{
+            fontSize: 13,
+            fontWeight: 700,
+            color: '#a78bfa',
+            margin: 0,
+            textTransform: 'uppercase',
+            letterSpacing: '0.12em',
+          }}>
+            SIGN UP NOW NOW NOW!!
           </p>
         </div>
 
         {/* Card */}
         <div style={{
-          background: '#1a1b22',
-          border: '0.5px solid #2a2b36',
-          borderRadius: 18,
+          background: 'rgba(26, 27, 34, 0.85)',
+          border: '0.5px solid #3b1f6e',
+          borderRadius: 20,
           padding: '2rem',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          boxShadow: '0 24px 64px rgba(124,58,237,0.25), 0 4px 16px rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(12px)',
         }}>
           <p style={{ fontSize: 13, color: '#8b8ca8', textAlign: 'center', margin: '0 0 20px' }}>
             Sign in with your Discord account to continue
@@ -96,7 +140,9 @@ export default function AuthScreen({ onAuthenticated, apiUrl }) {
               padding: '13px',
               borderRadius: 12,
               border: 'none',
-              background: busy ? '#3a3d8a' : '#5865f2',
+              background: busy
+                ? '#3a3d8a'
+                : 'linear-gradient(135deg, #5865f2 0%, #7c3aed 100%)',
               cursor: busy ? 'not-allowed' : 'pointer',
               color: '#fff',
               fontSize: 15,
@@ -105,12 +151,12 @@ export default function AuthScreen({ onAuthenticated, apiUrl }) {
               alignItems: 'center',
               justifyContent: 'center',
               gap: 10,
-              boxShadow: '0 4px 20px #5865f266',
-              transition: 'background 0.2s, transform 0.1s',
+              boxShadow: busy ? 'none' : '0 4px 20px rgba(88,101,242,0.5)',
+              transition: 'all 0.2s',
               transform: busy ? 'scale(0.98)' : 'scale(1)',
             }}
-            onMouseEnter={e => { if (!busy) e.currentTarget.style.background = '#4752c4'; }}
-            onMouseLeave={e => { if (!busy) e.currentTarget.style.background = '#5865f2'; }}
+            onMouseEnter={e => { if (!busy) { e.currentTarget.style.background = 'linear-gradient(135deg, #4752c4 0%, #6d28d9 100%)'; e.currentTarget.style.boxShadow = '0 6px 24px rgba(88,101,242,0.65)'; }}}
+            onMouseLeave={e => { if (!busy) { e.currentTarget.style.background = 'linear-gradient(135deg, #5865f2 0%, #7c3aed 100%)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(88,101,242,0.5)'; }}}
           >
             {busy ? (
               <>
@@ -125,12 +171,12 @@ export default function AuthScreen({ onAuthenticated, apiUrl }) {
             )}
           </button>
 
-          {/* Error message */}
+          {/* Error */}
           {error && (
             <div style={{
               marginTop: 16,
               padding: '10px 14px',
-              borderRadius: 8,
+              borderRadius: 9,
               background: '#ff000015',
               border: '0.5px solid #ff000044',
               display: 'flex',
@@ -142,16 +188,15 @@ export default function AuthScreen({ onAuthenticated, apiUrl }) {
             </div>
           )}
 
-          {/* Footer note */}
           <p style={{ fontSize: 11, color: '#52536a', textAlign: 'center', margin: '20px 0 0', lineHeight: 1.5 }}>
-            By continuing you agree to share your Discord username<br />and profile with Discord Calendar.
+            By continuing you agree to share your Discord username<br />and profile with Discord Games Calendar.
           </p>
         </div>
-
-        <style>{`
-          @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        `}</style>
       </div>
+
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 }
