@@ -4,6 +4,8 @@ node_modules/
 # Environment variables — NEVER commit these
 .env
 *.env.local
+.env.production
+secrets.json
 
 # Build output
 frontend/dist/

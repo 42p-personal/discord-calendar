@@ -1,14 +1,15 @@
 /**
  * Discord Calendar - Cloudflare Worker
  *
- * Auth:       Discord OAuth2 only
+ * Auth:       Discord OAuth2 (guilds scope)
  * Database:   Supabase REST API
- * Features:   Events with start/end time, attendee join/leave
+ * Features:   Per-server (guild) calendar, events, activities, games
  *
  * Secrets (wrangler secret put):
  *   SUPABASE_URL, SUPABASE_SERVICE_KEY, SESSION_SECRET,
  *   RESEND_API_KEY, EMAIL_FROM, FRONTEND_URL,
- *   DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET
+ *   DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET,
+ *   RAWG_API_KEY
  */
 
 // ============================================================
@@ -85,7 +86,7 @@ function getCorsHeaders(request, env) {
     'Access-Control-Allow-Origin':      origin,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods':     'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers':     'Content-Type',
+    'Access-Control-Allow-Headers':     'Content-Type, X-Guild-ID',
     'Access-Control-Max-Age':           '86400',
   };
 }
@@ -95,6 +96,12 @@ function jsonResponse(data, status, env, request) {
     status: status || 200,
     headers: Object.assign({ 'Content-Type': 'application/json' }, getCorsHeaders(request, env)),
   });
+}
+
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function futureStr(days) {
+  var d = new Date(); d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 // ============================================================
@@ -141,24 +148,39 @@ async function requireAuth(request, env) {
   return null;
 }
 
+// Guild ID from request header
+function getGuildId(request) {
+  return request.headers.get('X-Guild-ID') || null;
+}
+
+async function requireAuthAndGuild(request, env) {
+  var authErr = await requireAuth(request, env);
+  if (authErr) return authErr;
+  var guildId = getGuildId(request);
+  if (!guildId) return jsonResponse({ error: 'No server selected. Please select a Discord server.' }, 400, env, request);
+  request.guildId = guildId;
+  return null;
+}
+
 // ============================================================
 // USER / SESSION BUILDERS
 // ============================================================
 
-function buildSessionData(user) {
+function buildSessionData(user, accessToken) {
   return {
-    userId:    user.id,
-    email:     user.email     || null,
-    discordId: user.discord_id || null,
-    name:      user.name,
-    username:  user.username,
-    avatar:    user.avatar_char,
-    avatarUrl: user.avatar_url || null,
+    userId:       user.id,
+    email:        user.email        || null,
+    discordId:    user.discord_id   || null,
+    name:         user.name,
+    username:     user.username,
+    avatar:       user.avatar_char,
+    avatarUrl:    user.avatar_url   || null,
+    accessToken:  accessToken       || null,
   };
 }
 
-async function respondWithSession(env, user, request) {
-  var sessData = buildSessionData(user);
+async function respondWithSession(env, user, accessToken, request) {
+  var sessData = buildSessionData(user, accessToken);
   var sid      = await createSession(env, sessData);
   var response = jsonResponse(sessData, 200, env, request);
   response.headers.append('Set-Cookie', sessionCookie(sid));
@@ -175,6 +197,7 @@ function toActivity(row) {
     name:      row.name,
     icon:      row.icon,
     color:     row.color,
+    guildId:   row.guild_id,
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
@@ -190,14 +213,170 @@ function toEvent(row) {
     activityColor:       row.activity_color,
     activityIcon:        row.activity_icon,
     date:                row.date,
-    startTime:           row.start_time || null,
-    endTime:             row.end_time   || null,
+    startTime:           row.start_time  || null,
+    endTime:             row.end_time    || null,
+    guildId:             row.guild_id,
     proposedBy:          row.proposed_by,
     proposedByName:      row.proposed_by_name,
     proposedByUsername:  row.proposed_by_username,
     attendees:           attendees,
     createdAt:           row.created_at,
   };
+}
+
+function toGame(row) {
+  return {
+    id:              row.id,
+    rawgId:          row.rawg_id,
+    name:            row.name,
+    releaseDate:     row.release_date,
+    coverUrl:        row.cover_url,
+    platforms:       row.platforms,
+    guildId:         row.guild_id,
+    isManual:        row.is_manual,
+    addedBy:         row.added_by,
+    calendarEventId: row.calendar_event_id,
+    createdAt:       row.created_at,
+  };
+}
+
+// ============================================================
+// DISCORD GUILD HELPERS
+// ============================================================
+
+async function fetchUserGuilds(accessToken) {
+  var res = await fetch('https://discord.com/api/users/@me/guilds', {
+    headers: { Authorization: 'Bearer ' + accessToken },
+  });
+  if (!res.ok) throw new Error('Failed to fetch guilds: ' + res.status);
+  return res.json();
+}
+
+function formatGuild(g) {
+  var iconUrl = g.icon
+    ? 'https://cdn.discordapp.com/icons/' + g.id + '/' + g.icon + '.png'
+    : null;
+  return {
+    id:      g.id,
+    name:    g.name,
+    iconUrl: iconUrl,
+    owner:   g.owner,
+  };
+}
+
+// ============================================================
+// RAWG HELPERS
+// ============================================================
+
+async function fetchUpcomingSurvivalGames(env, page) {
+  page = page || 1;
+  var url = 'https://api.rawg.io/api/games'
+    + '?key='        + encodeURIComponent(env.RAWG_API_KEY)
+    + '&tags=799,7'
+    + '&dates='      + todayStr() + ',' + futureStr(365)
+    + '&ordering=released'
+    + '&page_size=40'
+    + '&page='       + page;
+  var res = await fetch(url);
+  if (!res.ok) throw new Error('RAWG fetch failed: ' + res.status);
+  return res.json();
+}
+
+async function searchRawgGames(env, query) {
+  var url = 'https://api.rawg.io/api/games'
+    + '?key='    + encodeURIComponent(env.RAWG_API_KEY)
+    + '&search=' + encodeURIComponent(query)
+    + '&page_size=10';
+  var res = await fetch(url);
+  if (!res.ok) throw new Error('RAWG search failed: ' + res.status);
+  return res.json();
+}
+
+// ============================================================
+// CRON: sync upcoming survival multiplayer games
+// Runs for ALL guilds that have at least one watched game
+// ============================================================
+
+async function runGameSync(env) {
+  console.log('[cron] Starting game sync...');
+
+  var rawgData;
+  try {
+    rawgData = await fetchUpcomingSurvivalGames(env, 1);
+  } catch (err) {
+    console.error('[cron] RAWG fetch failed:', err.message);
+    return;
+  }
+
+  // Get all distinct guild_ids that have watched games
+  var allGames = await sbSelect(env, 'watched_games', 'is_manual=eq.false&select=guild_id').catch(function() { return []; });
+  var guildIds = [...new Set(allGames.map(function(g) { return g.guild_id; }).filter(Boolean))];
+
+  if (guildIds.length === 0) {
+    console.log('[cron] No guilds with watched games yet, skipping.');
+    return;
+  }
+
+  var games = rawgData.results || [];
+  var added = 0;
+
+  for (var gi = 0; gi < guildIds.length; gi++) {
+    var guildId = guildIds[gi];
+
+    // Find or create Game Release activity for this guild
+    var actName  = 'Game Release';
+    var actColor = '#6366f1';
+    var actIcon  = '🎮';
+    var existingAct = await sbSelectOne(env, 'activities',
+      'name=eq.' + encodeURIComponent(actName) + '&guild_id=eq.' + encodeURIComponent(guildId));
+    var actId = existingAct ? existingAct.id : null;
+    if (!actId) {
+      var newAct = await sbInsert(env, 'activities', {
+        id: newId(), name: actName, icon: actIcon, color: actColor,
+        created_by: null, guild_id: guildId,
+      });
+      actId = newAct.id;
+    }
+
+    for (var i = 0; i < games.length; i++) {
+      var game = games[i];
+      if (!game.released) continue;
+
+      // Skip if already tracked for this guild
+      var existing = await sbSelectOne(env, 'watched_games',
+        'rawg_id=eq.' + encodeURIComponent(game.id) + '&guild_id=eq.' + encodeURIComponent(guildId));
+      if (existing) continue;
+
+      var platforms = '';
+      if (game.platforms && game.platforms.length) {
+        platforms = game.platforms.map(function(p) { return p.platform.name; }).slice(0, 4).join(', ');
+      }
+
+      var saved = await sbInsert(env, 'watched_games', {
+        id: newId(), rawg_id: game.id, name: game.name,
+        release_date: game.released, cover_url: game.background_image || null,
+        platforms: platforms, is_manual: false, added_by: null,
+        calendar_event_id: null, guild_id: guildId,
+      });
+
+      var eventId = newId();
+      await sbInsert(env, 'events', {
+        id: eventId, activity_id: actId, activity_name: actName,
+        activity_color: actColor, activity_icon: actIcon,
+        date: game.released, start_time: null, end_time: null,
+        proposed_by: null, proposed_by_name: game.name,
+        proposed_by_username: 'game-release', attendees: '[]',
+        guild_id: guildId,
+      });
+
+      await sbUpdate(env, 'watched_games', 'id=eq.' + encodeURIComponent(saved.id),
+        { calendar_event_id: eventId });
+
+      added++;
+    }
+  }
+
+  console.log('[cron] Sync complete. Added:', added);
 }
 
 // ============================================================
@@ -226,7 +405,7 @@ async function handleRequest(request, env) {
       client_id:     env.DISCORD_CLIENT_ID,
       redirect_uri:  new URL(request.url).origin + '/auth/discord/callback',
       response_type: 'code',
-      scope:         'identify email',
+      scope:         'identify email guilds',
     });
     return Response.redirect('https://discord.com/oauth2/authorize?' + params.toString(), 302);
   }
@@ -234,16 +413,14 @@ async function handleRequest(request, env) {
   if (path === '/auth/discord/callback' && method === 'GET') {
     var code       = url.searchParams.get('code');
     var oauthError = url.searchParams.get('error');
-
     if (oauthError || !code) {
       return Response.redirect(env.FRONTEND_URL + '?auth_error=discord_denied', 302);
     }
-
     try {
       var tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body:    new URLSearchParams({
+        body: new URLSearchParams({
           client_id:     env.DISCORD_CLIENT_ID,
           client_secret: env.DISCORD_CLIENT_SECRET,
           grant_type:    'authorization_code',
@@ -251,22 +428,20 @@ async function handleRequest(request, env) {
           redirect_uri:  new URL(request.url).origin + '/auth/discord/callback',
         }),
       });
-
       if (!tokenRes.ok) {
         console.error('[discord/callback] token failed:', await tokenRes.text());
         return Response.redirect(env.FRONTEND_URL + '?auth_error=token_exchange', 302);
       }
-
       var tokenData  = await tokenRes.json();
-      var profileRes = await fetch('https://discord.com/api/users/@me', {
-        headers: { Authorization: 'Bearer ' + tokenData.access_token },
-      });
+      var accessToken = tokenData.access_token;
 
+      var profileRes = await fetch('https://discord.com/api/users/@me', {
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
       if (!profileRes.ok) {
         console.error('[discord/callback] profile failed:', await profileRes.text());
         return Response.redirect(env.FRONTEND_URL + '?auth_error=profile_fetch', 302);
       }
-
       var profile     = await profileRes.json();
       var discordId   = profile.id;
       var discordName = profile.global_name || profile.username;
@@ -275,38 +450,31 @@ async function handleRequest(request, env) {
         : null;
 
       var user = await sbSelectOne(env, 'users', 'discord_id=eq.' + encodeURIComponent(discordId));
-
       if (!user && profile.email) {
         user = await sbSelectOne(env, 'users', 'email=eq.' + encodeURIComponent(profile.email));
         if (user) {
-          await sbUpdate(env, 'users', 'id=eq.' + encodeURIComponent(user.id), {
-            discord_id: discordId, avatar_url: avatarUrl,
-          });
+          await sbUpdate(env, 'users', 'id=eq.' + encodeURIComponent(user.id),
+            { discord_id: discordId, avatar_url: avatarUrl });
           user = Object.assign({}, user, { discord_id: discordId, avatar_url: avatarUrl });
         }
       }
-
       if (!user) {
         var baseUsername = profile.username.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 18);
         var username     = baseUsername;
         var suffix       = 1;
         while (await sbSelectOne(env, 'users', 'username=ilike.' + encodeURIComponent(username))) {
-          username = baseUsername + suffix;
-          suffix++;
+          username = baseUsername + suffix; suffix++;
         }
         user = await sbInsert(env, 'users', {
-          id:          newId(),
-          email:       profile.email || null,
-          discord_id:  discordId,
-          name:        discordName,
-          username:    username,
-          avatar_char: discordName[0].toUpperCase(),
-          avatar_url:  avatarUrl,
+          id: newId(), email: profile.email || null, discord_id: discordId,
+          name: discordName, username: username,
+          avatar_char: discordName[0].toUpperCase(), avatar_url: avatarUrl,
         });
       }
 
-      var sessData  = buildSessionData(user);
-      var sid       = await createSession(env, sessData);
+      // Store access token in session for guild lookups
+      var sessData = buildSessionData(user, accessToken);
+      var sid      = await createSession(env, sessData);
 
       return new Response(null, {
         status: 302,
@@ -315,7 +483,6 @@ async function handleRequest(request, env) {
           'Set-Cookie': sessionCookie(sid),
         },
       });
-
     } catch (err) {
       console.error('[discord/callback] error:', err.message);
       return Response.redirect(env.FRONTEND_URL + '?auth_error=server_error', 302);
@@ -325,7 +492,10 @@ async function handleRequest(request, env) {
   if (path === '/auth/me' && method === 'GET') {
     var sess = await getSession(request, env);
     if (!sess || !sess.userId) return jsonResponse({ error: 'Not signed in.' }, 401, env, request);
-    return jsonResponse(sess, 200, env, request);
+    // Never expose the access token to the frontend
+    var safe = Object.assign({}, sess);
+    delete safe.accessToken;
+    return jsonResponse(safe, 200, env, request);
   }
 
   if (path === '/auth/logout' && method === 'POST') {
@@ -339,45 +509,65 @@ async function handleRequest(request, env) {
   }
 
   // ----------------------------------------------------------
-  // ACTIVITIES
+  // GUILDS — returns the user's Discord servers
+  // ----------------------------------------------------------
+
+  if (path === '/api/guilds' && method === 'GET') {
+    var ae = await requireAuth(request, env); if (ae) return ae;
+    var accessToken = request.session.accessToken;
+    if (!accessToken) {
+      return jsonResponse({ error: 'Session expired. Please sign in again.' }, 401, env, request);
+    }
+    try {
+      var guilds = await fetchUserGuilds(accessToken);
+      return jsonResponse(guilds.map(formatGuild), 200, env, request);
+    } catch (err) {
+      console.error('[GET guilds]', err.message);
+      return jsonResponse({ error: 'Failed to load your servers. Please sign in again.' }, 500, env, request);
+    }
+  }
+
+  // ----------------------------------------------------------
+  // ACTIVITIES (all scoped by guild_id)
   // ----------------------------------------------------------
 
   if (path === '/api/activities' && method === 'GET') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      var rows = await sbSelect(env, 'activities', 'order=created_at.asc');
+      var rows = await sbSelect(env, 'activities',
+        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&order=created_at.asc');
       return jsonResponse(rows.map(toActivity), 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to load activities.' }, 500, env, request); }
   }
 
   if (path === '/api/activities' && method === 'POST') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b   = await request.json();
       var row = await sbInsert(env, 'activities', {
         id: b.id, name: b.name.trim(), icon: b.icon, color: b.color,
-        created_by: request.session.userId,
+        created_by: request.session.userId, guild_id: request.guildId,
       });
       return jsonResponse(toActivity(row), 201, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to create activity.' }, 500, env, request); }
   }
 
   var actMatch = path.match(/^\/api\/activities\/([^/]+)$/);
-
   if (actMatch && method === 'PUT') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b = await request.json();
       await sbUpdate(env, 'activities', 'id=eq.' + encodeURIComponent(actMatch[1]),
         { name: b.name.trim(), icon: b.icon, color: b.color });
-      await sbUpdate(env, 'events', 'activity_id=eq.' + encodeURIComponent(actMatch[1]),
+      await sbUpdate(env, 'events',
+        'activity_id=eq.' + encodeURIComponent(actMatch[1]) + '&guild_id=eq.' + encodeURIComponent(request.guildId),
         { activity_name: b.name.trim(), activity_color: b.color, activity_icon: b.icon });
       return jsonResponse({ ok: true }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to update activity.' }, 500, env, request); }
   }
 
   if (actMatch && method === 'DELETE') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       await sbDelete(env, 'activities', 'id=eq.' + encodeURIComponent(actMatch[1]));
       return jsonResponse({ ok: true }, 200, env, request);
@@ -385,34 +575,29 @@ async function handleRequest(request, env) {
   }
 
   // ----------------------------------------------------------
-  // EVENTS
+  // EVENTS (all scoped by guild_id)
   // ----------------------------------------------------------
 
   if (path === '/api/events' && method === 'GET') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      var rows = await sbSelect(env, 'events', 'order=date.asc,created_at.asc');
+      var rows = await sbSelect(env, 'events',
+        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&order=date.asc,created_at.asc');
       return jsonResponse(rows.map(toEvent), 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to load events.' }, 500, env, request); }
   }
 
   if (path === '/api/events' && method === 'POST') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b   = await request.json();
       var row = await sbInsert(env, 'events', {
-        id:                   b.id,
-        activity_id:          b.activityId,
-        activity_name:        b.activityName,
-        activity_color:       b.activityColor,
-        activity_icon:        b.activityIcon,
-        date:                 b.date,
-        start_time:           b.startTime  || null,
-        end_time:             b.endTime    || null,
-        proposed_by:          request.session.userId,
-        proposed_by_name:     request.session.name,
-        proposed_by_username: request.session.username,
-        attendees:            '[]',
+        id: b.id, activity_id: b.activityId, activity_name: b.activityName,
+        activity_color: b.activityColor, activity_icon: b.activityIcon,
+        date: b.date, start_time: b.startTime || null, end_time: b.endTime || null,
+        proposed_by: request.session.userId, proposed_by_name: request.session.name,
+        proposed_by_username: request.session.username, attendees: '[]',
+        guild_id: request.guildId,
       });
       return jsonResponse(toEvent(row), 201, env, request);
     } catch (err) {
@@ -421,10 +606,9 @@ async function handleRequest(request, env) {
     }
   }
 
-  // PUT /api/events/:id/date  (drag reschedule)
   var evDateMatch = path.match(/^\/api\/events\/([^/]+)\/date$/);
   if (evDateMatch && method === 'PUT') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b = await request.json();
       await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(evDateMatch[1]), { date: b.date });
@@ -432,7 +616,6 @@ async function handleRequest(request, env) {
     } catch (err) { return jsonResponse({ error: 'Failed to move event.' }, 500, env, request); }
   }
 
-  // POST /api/events/:id/join
   var evJoinMatch = path.match(/^\/api\/events\/([^/]+)\/join$/);
   if (evJoinMatch && method === 'POST') {
     var ae = await requireAuth(request, env); if (ae) return ae;
@@ -440,30 +623,17 @@ async function handleRequest(request, env) {
       var evId  = evJoinMatch[1];
       var evRow = await sbSelectOne(env, 'events', 'id=eq.' + encodeURIComponent(evId));
       if (!evRow) return jsonResponse({ error: 'Event not found.' }, 404, env, request);
-
       var attendees = [];
       try { attendees = JSON.parse(evRow.attendees || '[]'); } catch (e) {}
-
       var userId = request.session.userId;
       if (!attendees.find(function(a) { return a.id === userId; })) {
-        attendees.push({
-          id:       userId,
-          name:     request.session.name,
-          username: request.session.username,
-          avatar:   request.session.avatar,
-        });
-        await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(evId),
-          { attendees: JSON.stringify(attendees) });
+        attendees.push({ id: userId, name: request.session.name, username: request.session.username, avatar: request.session.avatar });
+        await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(evId), { attendees: JSON.stringify(attendees) });
       }
-
       return jsonResponse({ ok: true, attendees: attendees }, 200, env, request);
-    } catch (err) {
-      console.error('[join]', err.message);
-      return jsonResponse({ error: 'Failed to join event.' }, 500, env, request);
-    }
+    } catch (err) { return jsonResponse({ error: 'Failed to join event.' }, 500, env, request); }
   }
 
-  // POST /api/events/:id/leave
   var evLeaveMatch = path.match(/^\/api\/events\/([^/]+)\/leave$/);
   if (evLeaveMatch && method === 'POST') {
     var ae = await requireAuth(request, env); if (ae) return ae;
@@ -471,23 +641,14 @@ async function handleRequest(request, env) {
       var evId  = evLeaveMatch[1];
       var evRow = await sbSelectOne(env, 'events', 'id=eq.' + encodeURIComponent(evId));
       if (!evRow) return jsonResponse({ error: 'Event not found.' }, 404, env, request);
-
       var attendees = [];
       try { attendees = JSON.parse(evRow.attendees || '[]'); } catch (e) {}
-
-      var userId    = request.session.userId;
-      var filtered  = attendees.filter(function(a) { return a.id !== userId; });
-      await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(evId),
-        { attendees: JSON.stringify(filtered) });
-
+      var filtered  = attendees.filter(function(a) { return a.id !== request.session.userId; });
+      await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(evId), { attendees: JSON.stringify(filtered) });
       return jsonResponse({ ok: true, attendees: filtered }, 200, env, request);
-    } catch (err) {
-      console.error('[leave]', err.message);
-      return jsonResponse({ error: 'Failed to leave event.' }, 500, env, request);
-    }
+    } catch (err) { return jsonResponse({ error: 'Failed to leave event.' }, 500, env, request); }
   }
 
-  // DELETE /api/events/:id
   var evMatch = path.match(/^\/api\/events\/([^/]+)$/);
   if (evMatch && method === 'DELETE') {
     var ae = await requireAuth(request, env); if (ae) return ae;
@@ -500,6 +661,107 @@ async function handleRequest(request, env) {
       await sbDelete(env, 'events', 'id=eq.' + encodeURIComponent(evId));
       return jsonResponse({ ok: true }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to delete event.' }, 500, env, request); }
+  }
+
+  // ----------------------------------------------------------
+  // GAMES (all scoped by guild_id)
+  // ----------------------------------------------------------
+
+  if (path === '/api/games' && method === 'GET') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var rows = await sbSelect(env, 'watched_games',
+        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&order=release_date.asc');
+      return jsonResponse(rows.map(toGame), 200, env, request);
+    } catch (err) { return jsonResponse({ error: 'Failed to load games.' }, 500, env, request); }
+  }
+
+  if (path === '/api/games/search' && method === 'GET') {
+    var ae = await requireAuth(request, env); if (ae) return ae;
+    var query = url.searchParams.get('q');
+    if (!query || query.trim().length < 2) {
+      return jsonResponse({ error: 'Search query must be at least 2 characters.' }, 400, env, request);
+    }
+    try {
+      var data    = await searchRawgGames(env, query.trim());
+      var results = (data.results || []).map(function(g) {
+        var platforms = '';
+        if (g.platforms && g.platforms.length) {
+          platforms = g.platforms.map(function(p) { return p.platform.name; }).slice(0, 4).join(', ');
+        }
+        return { rawgId: g.id, name: g.name, releaseDate: g.released || null, coverUrl: g.background_image || null, platforms: platforms };
+      });
+      return jsonResponse(results, 200, env, request);
+    } catch (err) { return jsonResponse({ error: 'Search failed.' }, 500, env, request); }
+  }
+
+  if (path === '/api/games' && method === 'POST') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var b = await request.json();
+      if (b.rawgId) {
+        var exists = await sbSelectOne(env, 'watched_games',
+          'rawg_id=eq.' + encodeURIComponent(b.rawgId) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
+        if (exists) return jsonResponse({ error: 'This game is already being tracked.' }, 409, env, request);
+      }
+      var actName = 'Game Release'; var actColor = '#6366f1'; var actIcon = '🎮';
+      var existingAct = await sbSelectOne(env, 'activities',
+        'name=eq.' + encodeURIComponent(actName) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
+      var actId = existingAct ? existingAct.id : null;
+      if (!actId) {
+        var newAct = await sbInsert(env, 'activities', {
+          id: newId(), name: actName, icon: actIcon, color: actColor,
+          created_by: null, guild_id: request.guildId,
+        });
+        actId = newAct.id;
+      }
+      var saved = await sbInsert(env, 'watched_games', {
+        id: newId(), rawg_id: b.rawgId || null, name: b.name,
+        release_date: b.releaseDate || null, cover_url: b.coverUrl || null,
+        platforms: b.platforms || '', is_manual: true,
+        added_by: request.session.userId, calendar_event_id: null,
+        guild_id: request.guildId,
+      });
+      if (b.releaseDate) {
+        var eventId = newId();
+        await sbInsert(env, 'events', {
+          id: eventId, activity_id: actId, activity_name: actName,
+          activity_color: actColor, activity_icon: actIcon,
+          date: b.releaseDate, start_time: null, end_time: null,
+          proposed_by: null, proposed_by_name: b.name,
+          proposed_by_username: 'game-release', attendees: '[]',
+          guild_id: request.guildId,
+        });
+        await sbUpdate(env, 'watched_games', 'id=eq.' + encodeURIComponent(saved.id), { calendar_event_id: eventId });
+        saved.calendar_event_id = eventId;
+      }
+      return jsonResponse(toGame(saved), 201, env, request);
+    } catch (err) {
+      console.error('[POST games]', err.message);
+      return jsonResponse({ error: 'Failed to add game.' }, 500, env, request);
+    }
+  }
+
+  var gameMatch = path.match(/^\/api\/games\/([^/]+)$/);
+  if (gameMatch && method === 'DELETE') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var gameRow = await sbSelectOne(env, 'watched_games', 'id=eq.' + encodeURIComponent(gameMatch[1]));
+      if (!gameRow) return jsonResponse({ error: 'Game not found.' }, 404, env, request);
+      if (gameRow.calendar_event_id) {
+        await sbDelete(env, 'events', 'id=eq.' + encodeURIComponent(gameRow.calendar_event_id)).catch(function() {});
+      }
+      await sbDelete(env, 'watched_games', 'id=eq.' + encodeURIComponent(gameMatch[1]));
+      return jsonResponse({ ok: true }, 200, env, request);
+    } catch (err) { return jsonResponse({ error: 'Failed to remove game.' }, 500, env, request); }
+  }
+
+  if (path === '/api/games/sync' && method === 'POST') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      await runGameSync(env);
+      return jsonResponse({ ok: true, message: 'Sync complete.' }, 200, env, request);
+    } catch (err) { return jsonResponse({ error: 'Sync failed: ' + err.message }, 500, env, request); }
   }
 
   return jsonResponse({ error: 'Not found.' }, 404, env, request);
@@ -516,9 +778,11 @@ export default {
     } catch (err) {
       console.error('[unhandled]', err.message);
       return new Response(JSON.stringify({ error: 'Internal server error.' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
+        status: 500, headers: { 'Content-Type': 'application/json' },
       });
     }
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runGameSync(env));
   },
 };
