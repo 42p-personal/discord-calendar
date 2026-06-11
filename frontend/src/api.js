@@ -31,4 +31,11 @@ export const api = {
     join:   (id)          => request('POST',   `/api/events/${id}/join`),
     leave:  (id)          => request('POST',   `/api/events/${id}/leave`),
   },
+  games: {
+    list:   ()            => request('GET',    '/api/games'),
+    search: (q)           => request('GET',    `/api/games/search?q=${encodeURIComponent(q)}`),
+    add:    (game)        => request('POST',   '/api/games', game),
+    remove: (id)          => request('DELETE', `/api/games/${id}`),
+    sync:   ()            => request('POST',   '/api/games/sync'),
+  },
 };

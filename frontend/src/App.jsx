@@ -38,7 +38,7 @@ export default function App() {
   const [dragOver,     setDragOver]     = useState(null);
 
   // ── activity manager ──────────────────────────────────────────
-  const [showMgr, setShowMgr] = useState(false);
+  const [showMgr,   setShowMgr]   = useState(false);
 
   // ── event popover ─────────────────────────────────────────────
   const [popover, setPopover] = useState(null);
@@ -358,6 +358,19 @@ export default function App() {
           <button onClick={toggleDark} className="dc-hover" title={darkMode ? 'Light mode' : 'Dark mode'} style={btn({ padding: '6px 10px', color: T.textSub })}>
             <i className={`ti ti-${darkMode ? 'sun' : 'moon'}`} style={{ fontSize: 15 }} aria-hidden="true" />
           </button>
+
+          {/* upcoming games link */}
+          <a
+            href="https://games.42p.uk"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="dc-hover"
+            style={{ ...btn({ padding: '6px 10px', color: T.textSub, gap: 5, textDecoration: 'none' }) }}
+            title="View upcoming game releases"
+          >
+            <span style={{ fontSize: 14, lineHeight: 1 }}>🎮</span>
+            <span style={{ fontSize: 12 }}>Upcoming Games</span>
+          </a>
 
           <div style={{ display: 'flex', gap: 3, background: T.bgHover, borderRadius: 8, padding: 3, border: `0.5px solid ${T.border}` }}>
             {['day', 'week', 'month'].map((v) => (
