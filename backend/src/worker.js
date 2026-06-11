@@ -676,6 +676,33 @@ async function handleRequest(request, env) {
     } catch (err) { return jsonResponse({ error: 'Failed to load games.' }, 500, env, request); }
   }
 
+  // GET /api/rawg/upcoming?page=N — proxy to RAWG for games.42p.uk browser
+  if (path === '/api/rawg/upcoming' && method === 'GET') {
+    var ae = await requireAuth(request, env); if (ae) return ae;
+    var page = parseInt(url.searchParams.get('page') || '1', 10);
+    try {
+      var data = await fetchUpcomingSurvivalGames(env, page);
+      var results = (data.results || []).map(function(g) {
+        var platforms = '';
+        if (g.platforms && g.platforms.length) {
+          platforms = g.platforms.map(function(p) { return p.platform.name; }).slice(0, 4).join(', ');
+        }
+        return {
+          rawgId:      g.id,
+          slug:        g.slug,
+          name:        g.name,
+          releaseDate: g.released || null,
+          coverUrl:    g.background_image || null,
+          platforms:   platforms,
+        };
+      });
+      return jsonResponse({ results: results, next: !!data.next }, 200, env, request);
+    } catch (err) {
+      console.error('[GET rawg/upcoming]', err.message);
+      return jsonResponse({ error: 'Failed to fetch games from RAWG.' }, 500, env, request);
+    }
+  }
+
   if (path === '/api/games/search' && method === 'GET') {
     var ae = await requireAuth(request, env); if (ae) return ae;
     var query = url.searchParams.get('q');
@@ -689,7 +716,7 @@ async function handleRequest(request, env) {
         if (g.platforms && g.platforms.length) {
           platforms = g.platforms.map(function(p) { return p.platform.name; }).slice(0, 4).join(', ');
         }
-        return { rawgId: g.id, name: g.name, releaseDate: g.released || null, coverUrl: g.background_image || null, platforms: platforms };
+        return { rawgId: g.id, slug: g.slug, name: g.name, releaseDate: g.released || null, coverUrl: g.background_image || null, platforms: platforms };
       });
       return jsonResponse(results, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Search failed.' }, 500, env, request); }
