@@ -676,31 +676,80 @@ async function handleRequest(request, env) {
     } catch (err) { return jsonResponse({ error: 'Failed to load games.' }, 500, env, request); }
   }
 
-  // GET /api/rawg/upcoming?page=N — proxy to RAWG for games.42p.uk browser
-  if (path === '/api/rawg/upcoming' && method === 'GET') {
+  // GET /api/rawg/games — flexible RAWG proxy for games.42p.uk
+  // Accepts: page, genres, tags, platforms, dates, ordering, search
+  if (path === '/api/rawg/games' && method === 'GET') {
     var ae = await requireAuth(request, env); if (ae) return ae;
-    var page = parseInt(url.searchParams.get('page') || '1', 10);
     try {
-      var data = await fetchUpcomingSurvivalGames(env, page);
+      var rawgParams = new URLSearchParams();
+      rawgParams.set('key', env.RAWG_API_KEY);
+      rawgParams.set('page_size', '40');
+
+      var page     = url.searchParams.get('page')     || '1';
+      var genres   = url.searchParams.get('genres')   || '';
+      var tags     = url.searchParams.get('tags')     || '';
+      var platforms= url.searchParams.get('platforms')|| '';
+      var dates    = url.searchParams.get('dates')    || '';
+      var ordering = url.searchParams.get('ordering') || '-released';
+      var search   = url.searchParams.get('search')   || '';
+
+      rawgParams.set('page',     page);
+      rawgParams.set('ordering', ordering);
+      if (genres)    rawgParams.set('genres',    genres);
+      if (tags)      rawgParams.set('tags',      tags);
+      if (platforms) rawgParams.set('platforms', platforms);
+      if (dates)     rawgParams.set('dates',     dates);
+      if (search)    rawgParams.set('search',    search);
+
+      var rawgRes = await fetch('https://api.rawg.io/api/games?' + rawgParams.toString());
+      if (!rawgRes.ok) throw new Error('RAWG error: ' + rawgRes.status);
+      var data    = await rawgRes.json();
+
       var results = (data.results || []).map(function(g) {
-        var platforms = '';
+        var ps = '';
         if (g.platforms && g.platforms.length) {
-          platforms = g.platforms.map(function(p) { return p.platform.name; }).slice(0, 4).join(', ');
+          ps = g.platforms.map(function(p) { return p.platform.name; }).slice(0, 4).join(', ');
+        }
+        var genreList = '';
+        if (g.genres && g.genres.length) {
+          genreList = g.genres.map(function(x) { return x.name; }).slice(0, 3).join(', ');
         }
         return {
           rawgId:      g.id,
           slug:        g.slug,
           name:        g.name,
-          releaseDate: g.released || null,
+          releaseDate: g.released   || null,
           coverUrl:    g.background_image || null,
-          platforms:   platforms,
+          platforms:   ps,
+          genres:      genreList,
+          rating:      g.rating     || null,
+          ratingsCount:g.ratings_count || 0,
         };
       });
-      return jsonResponse({ results: results, next: !!data.next }, 200, env, request);
+
+      return jsonResponse({
+        results: results,
+        count:   data.count || 0,
+        next:    !!data.next,
+      }, 200, env, request);
     } catch (err) {
-      console.error('[GET rawg/upcoming]', err.message);
+      console.error('[GET rawg/games]', err.message);
       return jsonResponse({ error: 'Failed to fetch games from RAWG.' }, 500, env, request);
     }
+  }
+
+  // Keep the old /api/rawg/upcoming route as an alias for backwards compat
+  if (path === '/api/rawg/upcoming' && method === 'GET') {
+    var ae = await requireAuth(request, env); if (ae) return ae;
+    try {
+      var data = await fetchUpcomingSurvivalGames(env, parseInt(url.searchParams.get('page') || '1', 10));
+      var results = (data.results || []).map(function(g) {
+        var ps = '';
+        if (g.platforms && g.platforms.length) ps = g.platforms.map(function(p) { return p.platform.name; }).slice(0, 4).join(', ');
+        return { rawgId: g.id, slug: g.slug, name: g.name, releaseDate: g.released || null, coverUrl: g.background_image || null, platforms: ps };
+      });
+      return jsonResponse({ results: results, next: !!data.next }, 200, env, request);
+    } catch (err) { return jsonResponse({ error: 'Failed to fetch games from RAWG.' }, 500, env, request); }
   }
 
   if (path === '/api/games/search' && method === 'GET') {
