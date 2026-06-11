@@ -691,15 +691,17 @@ async function handleRequest(request, env) {
       var platforms= url.searchParams.get('platforms')|| '';
       var dates    = url.searchParams.get('dates')    || '';
       var ordering = url.searchParams.get('ordering') || '-released';
-      var search   = url.searchParams.get('search')   || '';
+      var search        = url.searchParams.get('search')        || '';
+      var searchPrecise = url.searchParams.get('search_precise') || '';
 
       rawgParams.set('page',     page);
       rawgParams.set('ordering', ordering);
-      if (genres)    rawgParams.set('genres',    genres);
-      if (tags)      rawgParams.set('tags',      tags);
-      if (platforms) rawgParams.set('platforms', platforms);
-      if (dates)     rawgParams.set('dates',     dates);
-      if (search)    rawgParams.set('search',    search);
+      if (genres)         rawgParams.set('genres',         genres);
+      if (tags)           rawgParams.set('tags',           tags);
+      if (platforms)      rawgParams.set('platforms',      platforms);
+      if (dates)          rawgParams.set('dates',          dates);
+      if (search)         rawgParams.set('search',         search);
+      if (searchPrecise)  rawgParams.set('search_precise', searchPrecise);
 
       var rawgRes = await fetch('https://api.rawg.io/api/games?' + rawgParams.toString());
       if (!rawgRes.ok) throw new Error('RAWG error: ' + rawgRes.status);
