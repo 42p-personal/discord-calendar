@@ -93,18 +93,6 @@ npx wrangler secret:bulk secrets.json --name discord-calendar
 rm secrets.json
 ```
 
-## Worker secrets
-
-| Secret | Description |
-|---|---|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | Supabase service_role JWT |
-| `SESSION_SECRET` | Long random hex string for session signing |
-| `DISCORD_CLIENT_ID` | Discord application client ID |
-| `DISCORD_CLIENT_SECRET` | Discord application client secret |
-| `RAWG_API_KEY` | RAWG.io API key |
-| `FRONTEND_URL` | `https://calendar.42p.uk` |
-
 ## Related
 
 - **[games-calendar](https://github.com/42p-personal/games-calendar)** — companion game discovery frontend (games.42p.uk)

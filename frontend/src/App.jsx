@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { api, setGuildId } from './api.js';
 import { DEFAULT_ACTIVITIES, MONTHS, DAYS, buildTheme, uid, isoDate, getMonthMeta } from './constants.js';
 import AuthScreen       from './components/AuthScreen.jsx';
@@ -71,22 +71,34 @@ export default function App() {
   // ── auto-refresh ──────────────────────────────────────────
   useEffect(function() {
     if (appState !== 'calendar' || !currentGuild) return;
+    var refreshing = false;
 
-    async function refresh() {
-      if (document.visibilityState !== 'visible') return;
+    async function refreshEvents() {
+      if (document.visibilityState !== 'visible' || refreshing) return;
+      refreshing = true;
       try {
-        var results  = await Promise.all([api.activities.list(), api.events.list()]);
-        var acts = results[0]; var evts = results[1];
-        setActivities(acts.length ? acts : DEFAULT_ACTIVITIES);
+        var evts = await api.events.list();
         setEvents(indexEvents(evts));
       } catch (e) { /* silent */ }
+      finally { refreshing = false; }
     }
 
-    var intervalId = setInterval(refresh, 30000);
-    document.addEventListener('visibilitychange', refresh);
+    // Activities change rarely — poll every 5 minutes
+    async function refreshActivities() {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        var acts = await api.activities.list();
+        if (acts.length) setActivities(acts);
+      } catch (e) {}
+    }
+
+    var evtInterval = setInterval(refreshEvents, 30000);
+    var actInterval = setInterval(refreshActivities, 300000);
+    document.addEventListener('visibilitychange', refreshEvents);
     return function() {
-      clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', refresh);
+      clearInterval(evtInterval);
+      clearInterval(actInterval);
+      document.removeEventListener('visibilitychange', refreshEvents);
     };
   }, [appState, currentGuild]);
 
@@ -298,7 +310,7 @@ export default function App() {
     return Object.assign({ borderRadius: 8, border: '0.5px solid ' + T.borderMd, background: 'transparent', cursor: 'pointer', color: T.text, fontSize: 13, padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1, transition: 'background 0.12s' }, extra || {});
   };
 
-  var EventChip = useCallback(function EventChip(props) {
+  function EventChip(props) {
     var ev = props.ev; var dateKey = props.dateKey; var compact = props.compact || false;
     return (
       <div
@@ -315,7 +327,7 @@ export default function App() {
         <span style={{ fontSize: compact ? 9 : 11, color: T.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.activityName}</span>
       </div>
     );
-  }, [T.text]);
+  }
 
   // ── SCREENS ───────────────────────────────────────────────
 

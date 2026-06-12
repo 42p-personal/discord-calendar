@@ -105,40 +105,71 @@ function futureStr(days) {
 }
 
 // ============================================================
-// SESSION
+// SESSION — stateless JWT (HMAC-SHA256), no DB round-trip
 // ============================================================
+
+function _b64url(data) {
+  var bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+  var bin = '';
+  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function _fromb64url(s) {
+  var b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+  var bin = atob(b64);
+  var buf = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf;
+}
+
+async function _hmacKey(secret, usage) {
+  return crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, [usage]
+  );
+}
+
+async function _jwtSign(payload, secret) {
+  var hdr  = _b64url('{"alg":"HS256","typ":"JWT"}');
+  var body = _b64url(JSON.stringify(payload));
+  var msg  = hdr + '.' + body;
+  var key  = await _hmacKey(secret, 'sign');
+  var sig  = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(msg)));
+  return msg + '.' + _b64url(sig);
+}
+
+async function _jwtVerify(token, secret) {
+  var parts = token.split('.');
+  if (parts.length !== 3) return null;
+  var key = await _hmacKey(secret, 'verify');
+  var ok  = await crypto.subtle.verify('HMAC', key, _fromb64url(parts[2]),
+    new TextEncoder().encode(parts[0] + '.' + parts[1]));
+  if (!ok) return null;
+  var payload = JSON.parse(new TextDecoder().decode(_fromb64url(parts[1])));
+  if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
 
 async function getSession(request, env) {
   var cookie = request.headers.get('Cookie') || '';
   var match  = cookie.match(/dc_session=([^;]+)/);
   if (!match) return null;
-  var sid = decodeURIComponent(match[1]);
-  var now = new Date().toISOString();
-  var row = await sbSelectOne(env, 'session',
-    'sid=eq.' + encodeURIComponent(sid) + '&expire=gt.' + encodeURIComponent(now));
-  if (!row) return null;
-  try { return JSON.parse(row.sess); } catch (e) { return null; }
+  try { return await _jwtVerify(decodeURIComponent(match[1]), env.SESSION_SECRET); }
+  catch (e) { return null; }
 }
 
 async function createSession(env, data) {
-  var sid     = newId();
-  var expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  await sbUpsert(env, 'session', { sid: sid, sess: JSON.stringify(data), expire: expires });
-  return sid;
+  var payload = Object.assign({}, data, { exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 });
+  return _jwtSign(payload, env.SESSION_SECRET);
 }
 
-async function deleteSession(request, env) {
-  var cookie = request.headers.get('Cookie') || '';
-  var match  = cookie.match(/dc_session=([^;]+)/);
-  if (match) {
-    await sbDelete(env, 'session',
-      'sid=eq.' + encodeURIComponent(decodeURIComponent(match[1]))).catch(function() {});
-  }
-}
+// JWT sessions are stateless — logout just clears the cookie client-side
+async function deleteSession(request, env) {}
 
-function sessionCookie(sid, clear) {
+function sessionCookie(token, clear) {
   var maxAge = clear ? 0 : 30 * 24 * 60 * 60;
-  return 'dc_session=' + encodeURIComponent(sid) + '; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=' + maxAge;
+  return 'dc_session=' + encodeURIComponent(token) + '; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=' + maxAge;
 }
 
 async function requireAuth(request, env) {
@@ -279,7 +310,7 @@ async function fetchUpcomingSurvivalGames(env, page) {
     + '&ordering=released'
     + '&page_size=40'
     + '&page='       + page;
-  var res = await fetch(url);
+  var res = await fetch(url, { cf: { cacheEverything: true, cacheTtl: 300 } });
   if (!res.ok) throw new Error('RAWG fetch failed: ' + res.status);
   return res.json();
 }
@@ -289,7 +320,7 @@ async function searchRawgGames(env, query) {
     + '?key='    + encodeURIComponent(env.RAWG_API_KEY)
     + '&search=' + encodeURIComponent(query)
     + '&page_size=10';
-  var res = await fetch(url);
+  var res = await fetch(url, { cf: { cacheEverything: true, cacheTtl: 300 } });
   if (!res.ok) throw new Error('RAWG search failed: ' + res.status);
   return res.json();
 }
@@ -310,14 +341,18 @@ async function runGameSync(env) {
     return;
   }
 
-  // Get all distinct guild_ids that have watched games
-  var allGames = await sbSelect(env, 'watched_games', 'is_manual=eq.false&select=guild_id').catch(function() { return []; });
-  var guildIds = [...new Set(allGames.map(function(g) { return g.guild_id; }).filter(Boolean))];
+  // One query: batch-fetch all auto-tracked games (guild IDs + rawg IDs)
+  var allWatched = await sbSelect(env, 'watched_games',
+    'is_manual=eq.false&select=guild_id,rawg_id').catch(function() { return []; });
+  var guildIds   = [...new Set(allWatched.map(function(g) { return g.guild_id; }).filter(Boolean))];
 
   if (guildIds.length === 0) {
     console.log('[cron] No guilds with watched games yet, skipping.');
     return;
   }
+
+  // Build O(1) lookup set: "guildId:rawgId"
+  var watchedSet = new Set(allWatched.map(function(r) { return r.guild_id + ':' + r.rawg_id; }));
 
   var games = rawgData.results || [];
   var added = 0;
@@ -325,29 +360,28 @@ async function runGameSync(env) {
   for (var gi = 0; gi < guildIds.length; gi++) {
     var guildId = guildIds[gi];
 
-
     for (var i = 0; i < games.length; i++) {
       var game = games[i];
       if (!game.released) continue;
 
-      // Skip if already tracked for this guild
-      var existing = await sbSelectOne(env, 'watched_games',
-        'rawg_id=eq.' + encodeURIComponent(game.id) + '&guild_id=eq.' + encodeURIComponent(guildId));
-      if (existing) continue;
+      var key = guildId + ':' + game.id;
+      if (watchedSet.has(key)) continue;
+      watchedSet.add(key); // deduplicate within this run
 
       var platforms = '';
       if (game.platforms && game.platforms.length) {
         platforms = game.platforms.map(function(p) { return p.platform.name; }).slice(0, 4).join(', ');
       }
 
-      var saved = await sbInsert(env, 'watched_games', {
+      // Pre-generate eventId so no follow-up UPDATE is needed
+      var eventId = newId();
+      await sbInsert(env, 'watched_games', {
         id: newId(), rawg_id: game.id, name: game.name,
         release_date: game.released, cover_url: game.background_image || null,
         platforms: platforms, is_manual: false, added_by: null,
-        calendar_event_id: null, guild_id: guildId,
+        calendar_event_id: eventId, guild_id: guildId,
       });
 
-      var eventId = newId();
       await sbInsert(env, 'events', {
         id: eventId, activity_id: null, activity_name: game.name,
         activity_color: '#7c3aed', activity_icon: '🎮',
@@ -357,12 +391,13 @@ async function runGameSync(env) {
         guild_id: guildId,
       });
 
-      await sbUpdate(env, 'watched_games', 'id=eq.' + encodeURIComponent(saved.id),
-        { calendar_event_id: eventId });
-
       added++;
     }
   }
+
+  // Purge expired legacy sessions left over from pre-JWT era
+  await sbDelete(env, 'session',
+    'expire=lt.' + encodeURIComponent(new Date().toISOString())).catch(function() {});
 
   console.log('[cron] Sync complete. Added:', added);
 }
@@ -391,7 +426,7 @@ async function handleRequest(request, env) {
   if (path === '/auth/discord' && method === 'GET') {
     var params = new URLSearchParams({
       client_id:     env.DISCORD_CLIENT_ID,
-      redirect_uri:  new URL(request.url).origin + '/auth/discord/callback',
+      redirect_uri:  url.origin + '/auth/discord/callback',
       response_type: 'code',
       scope:         'identify email guilds',
     });
@@ -413,7 +448,7 @@ async function handleRequest(request, env) {
           client_secret: env.DISCORD_CLIENT_SECRET,
           grant_type:    'authorization_code',
           code:          code,
-          redirect_uri:  new URL(request.url).origin + '/auth/discord/callback',
+          redirect_uri:  url.origin + '/auth/discord/callback',
         }),
       });
       if (!tokenRes.ok) {
@@ -699,7 +734,8 @@ async function handleRequest(request, env) {
       if (search)         rawgParams.set('search',         search);
       if (searchPrecise)  rawgParams.set('search_precise', searchPrecise);
 
-      var rawgRes = await fetch('https://api.rawg.io/api/games?' + rawgParams.toString());
+      var rawgRes = await fetch('https://api.rawg.io/api/games?' + rawgParams.toString(),
+        { cf: { cacheEverything: true, cacheTtl: 300 } });
       if (!rawgRes.ok) throw new Error('RAWG error: ' + rawgRes.status);
       var data    = await rawgRes.json();
 
@@ -744,7 +780,8 @@ async function handleRequest(request, env) {
     try {
       var rawgId = storesMatch[1];
       var storesRes = await fetch(
-        'https://api.rawg.io/api/games/' + rawgId + '/stores?key=' + encodeURIComponent(env.RAWG_API_KEY)
+        'https://api.rawg.io/api/games/' + rawgId + '/stores?key=' + encodeURIComponent(env.RAWG_API_KEY),
+        { cf: { cacheEverything: true, cacheTtl: 86400 } }
       );
       if (!storesRes.ok) throw new Error('RAWG stores error: ' + storesRes.status);
       var storesData = await storesRes.json();
