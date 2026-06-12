@@ -693,6 +693,7 @@ async function handleRequest(request, env) {
       var ordering = url.searchParams.get('ordering') || '-released';
       var search        = url.searchParams.get('search')        || '';
       var searchPrecise = url.searchParams.get('search_precise') || '';
+      var tba           = url.searchParams.get('tba')           || '';
 
       rawgParams.set('page',     page);
       rawgParams.set('ordering', ordering);
@@ -700,6 +701,7 @@ async function handleRequest(request, env) {
       if (tags)           rawgParams.set('tags',           tags);
       if (platforms)      rawgParams.set('platforms',      platforms);
       if (dates)          rawgParams.set('dates',          dates);
+      if (tba)            rawgParams.set('tba',            tba);
       if (search)         rawgParams.set('search',         search);
       if (searchPrecise)  rawgParams.set('search_precise', searchPrecise);
 
