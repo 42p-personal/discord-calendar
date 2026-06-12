@@ -7,6 +7,7 @@ import EventPopover     from './components/EventPopover.jsx';
 import TimePickerModal  from './components/TimePickerModal.jsx';
 import GuildPicker      from './components/GuildPicker.jsx';
 import GuildSwitcher    from './components/GuildSwitcher.jsx';
+import MobileCalendar   from './components/MobileCalendar.jsx';
 
 const GUILD_STORAGE_KEY = 'dc_guild';
 
@@ -55,6 +56,14 @@ export default function App() {
 
   // ── event popover ─────────────────────────────────────────
   var [popover, setPopover] = useState(null);
+
+  // ── mobile detection ──────────────────────────────────────
+  var [isMobile, setIsMobile] = useState(function() { return window.innerWidth < 768; });
+  useEffect(function() {
+    function onResize() { setIsMobile(window.innerWidth < 768); }
+    window.addEventListener('resize', onResize);
+    return function() { window.removeEventListener('resize', onResize); };
+  }, []);
 
   var today = new Date();
   var T     = buildTheme(darkMode);
@@ -317,6 +326,41 @@ export default function App() {
         error={guildsError}
         currentGuildId={currentGuild ? currentGuild.id : null}
         onSelect={function(guild) { selectGuild(guild, currentUser); }}
+      />
+    );
+  }
+
+  // ── MOBILE ────────────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <MobileCalendar
+        events={events}
+        activities={activities}
+        currentUser={currentUser}
+        darkMode={darkMode}
+        viewYear={viewYear}
+        viewMonth={viewMonth}
+        setViewYear={setViewYear}
+        setViewMonth={setViewMonth}
+        onPropose={async function(activity, dateKey, startTime) {
+          var ev = {
+            id: uid(), activityId: activity.id, activityName: activity.name,
+            activityColor: activity.color, activityIcon: activity.icon,
+            date: dateKey, startTime: startTime || null, endTime: null,
+            proposedBy: currentUser.userId, proposedByName: currentUser.name,
+            proposedByUsername: currentUser.username, attendees: [], createdAt: Date.now(),
+          };
+          try {
+            var saved = await api.events.create(ev);
+            setEvents(function(prev) { return Object.assign({}, prev, { [dateKey]: (prev[dateKey] || []).concat(saved) }); });
+          } catch (err) { console.error('Failed to save event:', err.message); }
+        }}
+        onAttendeesChange={handleAttendeesChange}
+        onToggleDark={toggleDark}
+        onSignOut={handleSignOut}
+        currentGuild={currentGuild}
+        guilds={guilds}
+        onGuildSwitch={handleGuildSwitch}
       />
     );
   }
