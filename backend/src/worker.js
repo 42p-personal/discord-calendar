@@ -220,6 +220,7 @@ function toEvent(row) {
     proposedByName:      row.proposed_by_name,
     proposedByUsername:  row.proposed_by_username,
     attendees:           attendees,
+    steamUrl:            row.steam_url    || null,
     createdAt:           row.created_at,
   };
 }
@@ -232,6 +233,7 @@ function toGame(row) {
     releaseDate:     row.release_date,
     coverUrl:        row.cover_url,
     platforms:       row.platforms,
+    steamUrl:        row.steam_url       || null,
     guildId:         row.guild_id,
     isManual:        row.is_manual,
     addedBy:         row.added_by,
@@ -735,6 +737,26 @@ async function handleRequest(request, env) {
     }
   }
 
+  // GET /api/rawg/games/:rawgId/stores — return store URLs for a game (used to get Steam link)
+  var storesMatch = path.match(/^\/api\/rawg\/games\/(\d+)\/stores$/);
+  if (storesMatch && method === 'GET') {
+    var ae = await requireAuth(request, env); if (ae) return ae;
+    try {
+      var rawgId = storesMatch[1];
+      var storesRes = await fetch(
+        'https://api.rawg.io/api/games/' + rawgId + '/stores?key=' + encodeURIComponent(env.RAWG_API_KEY)
+      );
+      if (!storesRes.ok) throw new Error('RAWG stores error: ' + storesRes.status);
+      var storesData = await storesRes.json();
+      // store_id 1 = Steam
+      var steamEntry = (storesData.results || []).find(function(s) { return s.store_id === 1; });
+      return jsonResponse({ steamUrl: steamEntry ? steamEntry.url : null }, 200, env, request);
+    } catch (err) {
+      console.error('[GET rawg stores]', err.message);
+      return jsonResponse({ steamUrl: null }, 200, env, request);
+    }
+  }
+
   // Keep the old /api/rawg/upcoming route as an alias for backwards compat
   if (path === '/api/rawg/upcoming' && method === 'GET') {
     var ae = await requireAuth(request, env); if (ae) return ae;
@@ -782,9 +804,9 @@ async function handleRequest(request, env) {
       var saved = await sbInsert(env, 'watched_games', {
         id: newId(), rawg_id: b.rawgId || null, name: b.name,
         release_date: b.releaseDate || null, cover_url: b.coverUrl || null,
-        platforms: b.platforms || '', is_manual: true,
-        added_by: request.session.userId, calendar_event_id: null,
-        guild_id: request.guildId,
+        platforms: b.platforms || '', steam_url: b.steamUrl || null,
+        is_manual: true, added_by: request.session.userId,
+        calendar_event_id: null, guild_id: request.guildId,
       });
       if (b.releaseDate) {
         var eventId = newId();
@@ -794,6 +816,7 @@ async function handleRequest(request, env) {
           date: b.releaseDate, start_time: null, end_time: null,
           proposed_by: null, proposed_by_name: b.name,
           proposed_by_username: 'game-release', attendees: '[]',
+          steam_url: b.steamUrl || null,
           guild_id: request.guildId,
         });
         await sbUpdate(env, 'watched_games', 'id=eq.' + encodeURIComponent(saved.id), { calendar_event_id: eventId });
