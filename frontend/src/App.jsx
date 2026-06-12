@@ -68,6 +68,28 @@ export default function App() {
   var today = new Date();
   var T     = buildTheme(darkMode);
 
+  // ── auto-refresh ──────────────────────────────────────────
+  useEffect(function() {
+    if (appState !== 'calendar' || !currentGuild) return;
+
+    async function refresh() {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        var results  = await Promise.all([api.activities.list(), api.events.list()]);
+        var acts = results[0]; var evts = results[1];
+        setActivities(acts.length ? acts : DEFAULT_ACTIVITIES);
+        setEvents(indexEvents(evts));
+      } catch (e) { /* silent */ }
+    }
+
+    var intervalId = setInterval(refresh, 30000);
+    document.addEventListener('visibilitychange', refresh);
+    return function() {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [appState, currentGuild]);
+
   // ── bootstrap ─────────────────────────────────────────────
   useEffect(function() {
     api.auth.me()
@@ -387,6 +409,7 @@ export default function App() {
         .view-btn.active{background:${T.accent};border-color:${T.accent};color:#fff;font-weight:600;}
         .view-btn:hover:not(.active){background:${T.bgHover};color:${T.text};}
         @keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+        @keyframes pulse-live{0%,100%{opacity:1;box-shadow:0 0 0 0 #16a34a55;}50%{opacity:.7;box-shadow:0 0 0 4px #16a34a00;}}
       `}</style>
 
       {/* Top bar */}
@@ -435,6 +458,11 @@ export default function App() {
               <span style={{ fontSize: 12, color: T.accentTxt, fontWeight: 600 }}>{currentUser.name}</span>
               <span style={{ fontSize: 10, color: T.textMute }}>@{currentUser.username}</span>
             </div>
+          </div>
+
+          <div title="Auto-refreshes every 30 seconds" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 8px', borderRadius: 8, background: darkMode ? '#16a34a18' : '#f0fdf4', border: '0.5px solid ' + (darkMode ? '#16a34a44' : '#bbf7d0') }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#16a34a', display: 'inline-block', animation: 'pulse-live 2.5s ease-in-out infinite' }} />
+            <span style={{ fontSize: 11, fontWeight: 600, color: darkMode ? '#86efac' : '#166534' }}>Live</span>
           </div>
 
           <button onClick={handleSignOut} className="dc-hover" style={btn({ fontSize: 12, padding: '5px 10px', color: T.textSub })}>
