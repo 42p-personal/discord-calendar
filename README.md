@@ -1,66 +1,110 @@
-# Discord Calendar
+# 42p Calendar
 
-A shared event planning calendar for friend groups.
-Built with React (Vite) + Node.js (Express) + PostgreSQL.
+A shared event calendar for Discord friend groups, available at [calendar.42p.uk](https://calendar.42p.uk).
 
-## Features
+## What it does
 
-- Email-based authentication with one-time codes
-- Drag-and-drop events onto the calendar
-- Month, week and day views
+- Discord OAuth sign-in — access is tied to your Discord servers
+- Per-server (guild) calendar with month, week, and day views
+- Drag activities onto days to propose events; set start/end times
+- Join and leave events; see who's attending
+- Configurable activity library with emoji or custom image icons
+- Game release tracking via [42p Games](https://games.42p.uk) — games added there appear automatically as calendar events
+- Daily cron sync keeps upcoming game release dates up to date
 - Light and dark mode
-- Configurable shared activity library
-- Each event shows who proposed it
 
-## Project structure
+## Architecture
+
+```
+calendar.42p.uk   →  Cloudflare Pages  (React 18 + Vite)
+api.42p.uk        →  Cloudflare Worker (single worker.js)
+                       ├── Supabase PostgreSQL (REST API)
+                       ├── Discord OAuth2
+                       └── RAWG.io (game release data)
+```
+
+## Repo structure
 
 ```
 discord-calendar/
-├── frontend/          React + Vite (UI)
-│   ├── src/
-│   │   ├── App.jsx              Main calendar component
-│   │   ├── api.js               All API calls in one place
-│   │   ├── constants.js         Shared data and theme helpers
-│   │   └── components/
-│   │       ├── AuthScreen.jsx   Sign-in / sign-up / OTP verification
-│   │       ├── ActivityManager.jsx  Dark modal for managing activities
-│   │       └── EventPopover.jsx     Click-to-view event details
-│   └── index.html
-│
-├── backend/           Node.js + Express (API + static file server)
-│   ├── src/
-│   │   ├── index.js             Express app entry point
-│   │   ├── db/pool.js           PostgreSQL connection pool
-│   │   └── routes/
-│   │       ├── auth.js          OTP request, verify, me, logout
-│   │       └── data.js          Activities and events CRUD
-│   ├── db/schema.sql            Run once to create all tables
-│   └── .env.example             Template for environment variables
-│
-└── DEPLOYMENT_GUIDE.md          Step-by-step guide for 123reg VPS
+├── .github/workflows/
+│   └── deploy-worker.yml     Auto-deploys Worker on push to backend/
+├── backend/
+│   ├── src/worker.js         Entire backend in one file
+│   ├── wrangler.toml         Worker config + cron trigger (08:00 UTC daily)
+│   └── db/
+│       ├── schema.sql        Full schema — run once on a fresh DB
+│       └── migration_*.sql   Incremental migrations
+└── frontend/
+    └── src/
+        ├── App.jsx           Main calendar app
+        ├── api.js            All API calls; exports setGuildId/getGuildId
+        ├── constants.js      Theme, colours, date helpers
+        └── components/
+            ├── AuthScreen.jsx
+            ├── ActivityManager.jsx
+            ├── EventPopover.jsx
+            ├── TimePickerModal.jsx
+            ├── GuildPicker.jsx
+            └── GuildSwitcher.jsx
 ```
 
-## Quick start (local development)
+## Local development
 
-**1. Backend**
-```bash
-cd backend
-cp .env.example .env        # fill in your values
-npm install
-# Run the schema against your local or remote database:
-psql $DATABASE_URL -f db/schema.sql
-npm run dev                 # starts on http://localhost:4000
-```
-
-**2. Frontend**
+**Frontend**
 ```bash
 cd frontend
 npm install
-npm run dev                 # starts on http://localhost:3000
+# Create .env.local:
+# VITE_API_URL=https://api.42p.uk
+npm run dev
 ```
 
-The Vite dev server proxies `/api` and `/auth` to `localhost:4000`.
+**Worker (backend)**
+```bash
+cd backend
+npm install
+npx wrangler dev src/worker.js --name discord-calendar --compatibility-date 2025-01-01
+# Add secrets to .dev.vars for local use
+```
 
-## Deploying to production
+## Deployment
 
-See **DEPLOYMENT_GUIDE.md** for full step-by-step instructions for 123reg VPS hosting.
+**Deploy Worker**
+```bash
+cd backend
+npm run deploy
+# Verify api.42p.uk custom domain is still active after deploy:
+# Cloudflare → Workers & Pages → discord-calendar → Settings → Domains & Routes
+```
+
+**Deploy frontend**
+```bash
+cd frontend
+npm run build
+git add . && git commit -m "..." && git push
+# Cloudflare Pages auto-rebuilds from GitHub (project: discord-calendar)
+```
+
+**Update Worker secrets**
+```bash
+# Edit secrets.json (never commit this file)
+npx wrangler secret:bulk secrets.json --name discord-calendar
+rm secrets.json
+```
+
+## Worker secrets
+
+| Secret | Description |
+|---|---|
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | Supabase service_role JWT |
+| `SESSION_SECRET` | Long random hex string for session signing |
+| `DISCORD_CLIENT_ID` | Discord application client ID |
+| `DISCORD_CLIENT_SECRET` | Discord application client secret |
+| `RAWG_API_KEY` | RAWG.io API key |
+| `FRONTEND_URL` | `https://calendar.42p.uk` |
+
+## Related
+
+- **[games-calendar](https://github.com/42p-personal/games-calendar)** — companion game discovery frontend (games.42p.uk)
