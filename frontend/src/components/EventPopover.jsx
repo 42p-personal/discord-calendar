@@ -83,20 +83,34 @@ export default function EventPopover({ popover, currentUser, darkMode, T, onClos
           )}
         </div>
 
-        {/* Proposer */}
+        {/* Proposer / game source */}
         <div style={{ padding: '10px 16px', borderBottom: '0.5px solid ' + T.border }}>
-          <p style={{ margin: '0 0 6px', fontSize: 10, color: T.textMute, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Suggested by
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#6366f1', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
-              {(ev.proposedByName || '?')[0].toUpperCase()}
+          {ev.proposedByUsername === 'game-release' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#7c3aed', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
+                🎮
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: T.text }}>Game Release</p>
+                <p style={{ margin: 0, fontSize: 11, color: T.accentTxt }}>Added from 42p Games</p>
+              </div>
             </div>
-            <div>
-              <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: T.text }}>{ev.proposedByName}</p>
-              <p style={{ margin: 0, fontSize: 11, color: T.accentTxt }}>@{ev.proposedByUsername || 'unknown'}</p>
-            </div>
-          </div>
+          ) : (
+            <>
+              <p style={{ margin: '0 0 6px', fontSize: 10, color: T.textMute, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Suggested by
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#6366f1', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                  {(ev.proposedByName || '?')[0].toUpperCase()}
+                </div>
+                <div>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: T.text }}>{ev.proposedByName}</p>
+                  <p style={{ margin: 0, fontSize: 11, color: T.accentTxt }}>@{ev.proposedByUsername || 'unknown'}</p>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Attendees */}

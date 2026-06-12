@@ -323,20 +323,6 @@ async function runGameSync(env) {
   for (var gi = 0; gi < guildIds.length; gi++) {
     var guildId = guildIds[gi];
 
-    // Find or create Game Release activity for this guild
-    var actName  = 'Game Release';
-    var actColor = '#6366f1';
-    var actIcon  = '🎮';
-    var existingAct = await sbSelectOne(env, 'activities',
-      'name=eq.' + encodeURIComponent(actName) + '&guild_id=eq.' + encodeURIComponent(guildId));
-    var actId = existingAct ? existingAct.id : null;
-    if (!actId) {
-      var newAct = await sbInsert(env, 'activities', {
-        id: newId(), name: actName, icon: actIcon, color: actColor,
-        created_by: null, guild_id: guildId,
-      });
-      actId = newAct.id;
-    }
 
     for (var i = 0; i < games.length; i++) {
       var game = games[i];
@@ -361,8 +347,8 @@ async function runGameSync(env) {
 
       var eventId = newId();
       await sbInsert(env, 'events', {
-        id: eventId, activity_id: actId, activity_name: actName,
-        activity_color: actColor, activity_icon: actIcon,
+        id: eventId, activity_id: null, activity_name: game.name,
+        activity_color: '#7c3aed', activity_icon: '🎮',
         date: game.released, start_time: null, end_time: null,
         proposed_by: null, proposed_by_name: game.name,
         proposed_by_username: 'game-release', attendees: '[]',
@@ -791,17 +777,8 @@ async function handleRequest(request, env) {
           'rawg_id=eq.' + encodeURIComponent(b.rawgId) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
         if (exists) return jsonResponse({ error: 'This game is already being tracked.' }, 409, env, request);
       }
-      var actName = 'Game Release'; var actColor = '#6366f1'; var actIcon = '🎮';
-      var existingAct = await sbSelectOne(env, 'activities',
-        'name=eq.' + encodeURIComponent(actName) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
-      var actId = existingAct ? existingAct.id : null;
-      if (!actId) {
-        var newAct = await sbInsert(env, 'activities', {
-          id: newId(), name: actName, icon: actIcon, color: actColor,
-          created_by: null, guild_id: request.guildId,
-        });
-        actId = newAct.id;
-      }
+      // Games are not activities — they go straight to the calendar as named events.
+      // No activity is created or linked; the game name is the event name.
       var saved = await sbInsert(env, 'watched_games', {
         id: newId(), rawg_id: b.rawgId || null, name: b.name,
         release_date: b.releaseDate || null, cover_url: b.coverUrl || null,
@@ -812,8 +789,8 @@ async function handleRequest(request, env) {
       if (b.releaseDate) {
         var eventId = newId();
         await sbInsert(env, 'events', {
-          id: eventId, activity_id: actId, activity_name: actName,
-          activity_color: actColor, activity_icon: actIcon,
+          id: eventId, activity_id: null, activity_name: b.name,
+          activity_color: '#7c3aed', activity_icon: '🎮',
           date: b.releaseDate, start_time: null, end_time: null,
           proposed_by: null, proposed_by_name: b.name,
           proposed_by_username: 'game-release', attendees: '[]',
