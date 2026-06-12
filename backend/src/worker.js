@@ -685,18 +685,24 @@ async function handleRequest(request, env) {
       rawgParams.set('key', env.RAWG_API_KEY);
       rawgParams.set('page_size', '40');
 
-      var page     = url.searchParams.get('page')     || '1';
-      var genres   = url.searchParams.get('genres')   || '';
-      var tags     = url.searchParams.get('tags')     || '';
-      var platforms= url.searchParams.get('platforms')|| '';
-      var dates    = url.searchParams.get('dates')    || '';
-      var ordering = url.searchParams.get('ordering') || '-released';
+      var page          = url.searchParams.get('page')          || '1';
+      var genres        = url.searchParams.get('genres')        || '';
+      var tags          = url.searchParams.get('tags')          || '';
+      var platforms     = url.searchParams.get('platforms')     || '';
+      var dates         = url.searchParams.get('dates')         || '';
+      var ordering      = url.searchParams.get('ordering')      || '';
       var search        = url.searchParams.get('search')        || '';
-      var searchPrecise = url.searchParams.get('search_precise') || '';
+      var searchPrecise = url.searchParams.get('search_precise')|| '';
       var tba           = url.searchParams.get('tba')           || '';
 
-      rawgParams.set('page',     page);
-      rawgParams.set('ordering', ordering);
+      rawgParams.set('page', page);
+      // When tba=true, ordering by release date returns no results (TBA games have no date).
+      // The frontend sends ordering=-added for TBA; fall back to -added here as a safety net.
+      if (tba) {
+        rawgParams.set('ordering', ordering && ordering !== '-released' ? ordering : '-added');
+      } else {
+        rawgParams.set('ordering', ordering || '-released');
+      }
       if (genres)         rawgParams.set('genres',         genres);
       if (tags)           rawgParams.set('tags',           tags);
       if (platforms)      rawgParams.set('platforms',      platforms);
