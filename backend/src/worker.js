@@ -729,6 +729,7 @@ async function handleRequest(request, env) {
           slug:        g.slug,
           name:        g.name,
           releaseDate: g.released   || null,
+          tba:         g.tba        || false,
           coverUrl:    g.background_image || null,
           platforms:   ps,
           genres:      genreList,
