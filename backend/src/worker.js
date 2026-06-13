@@ -259,7 +259,7 @@ function toEvent(row) {
 function toGame(row) {
   return {
     id:              row.id,
-    steamId:         row.rawg_id,
+    steamId:         row.rawg_id != null ? String(row.rawg_id) : null,
     name:            row.name,
     releaseDate:     row.release_date,
     coverUrl:        row.cover_url,
