@@ -906,7 +906,7 @@ async function handleRequest(request, env) {
       var eventDate = b.releaseDate || new Date().toISOString().slice(0, 10);
       await sbInsert(env, 'events', {
         id: eventId, activity_id: null, activity_name: b.name,
-        activity_color: '#7c3aed', activity_icon: '🎮',
+        activity_color: '#7c3aed', activity_icon: b.coverUrl || '🎮',
         date: eventDate, start_time: null, end_time: null,
         proposed_by: null, proposed_by_name: b.name,
         proposed_by_username: 'game-release', attendees: '[]',
