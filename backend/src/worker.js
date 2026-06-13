@@ -273,6 +273,37 @@ function toGame(row) {
   };
 }
 
+function toRound(row) {
+  return {
+    id:        row.id,
+    guildId:   row.guild_id,
+    status:    row.status,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
+function toNomination(row) {
+  var voters = [];
+  try { voters = JSON.parse(row.voters || '[]'); } catch (e) {}
+  return {
+    id:                  row.id,
+    roundId:             row.round_id,
+    guildId:             row.guild_id,
+    steamId:             row.steam_id,
+    name:                row.name,
+    coverUrl:            row.cover_url,
+    steamUrl:            row.steam_url,
+    platforms:           row.platforms,
+    nominatedBy:         row.nominated_by,
+    nominatedByName:     row.nominated_by_name,
+    nominatedByUsername: row.nominated_by_username,
+    voters:              voters,
+    voteCount:           voters.length,
+    createdAt:           row.created_at,
+  };
+}
+
 // ============================================================
 // DISCORD GUILD HELPERS
 // ============================================================
@@ -942,6 +973,165 @@ async function handleRequest(request, env) {
       await runGameSync(env);
       return jsonResponse({ ok: true, message: 'Sync complete.' }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Sync failed: ' + err.message }, 500, env, request); }
+  }
+
+  // ============================================================
+  // VOTES
+  // ============================================================
+
+  // GET /api/votes/round — get or auto-create active round for guild
+  if (path === '/api/votes/round' && method === 'GET') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var round = await sbSelectOne(env, 'vote_rounds',
+        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&status=eq.open&order=created_at.desc');
+      if (!round) {
+        round = await sbInsert(env, 'vote_rounds', {
+          id: newId(), guild_id: request.guildId, status: 'open',
+          created_by: request.session.userId,
+        });
+      }
+      return jsonResponse(toRound(round), 200, env, request);
+    } catch (err) {
+      console.error('[GET votes/round]', err.message);
+      return jsonResponse({ error: 'Failed to get round.' }, 500, env, request);
+    }
+  }
+
+  // POST /api/votes/round/new — start a fresh round (closes existing)
+  if (path === '/api/votes/round/new' && method === 'POST') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      // Close all open rounds for this guild
+      var openRounds = await sbSelect(env, 'vote_rounds',
+        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&status=eq.open');
+      for (var i = 0; i < openRounds.length; i++) {
+        await sbUpdate(env, 'vote_rounds', 'id=eq.' + encodeURIComponent(openRounds[i].id), { status: 'closed' });
+      }
+      var newRound = await sbInsert(env, 'vote_rounds', {
+        id: newId(), guild_id: request.guildId, status: 'open',
+        created_by: request.session.userId,
+      });
+      return jsonResponse(toRound(newRound), 201, env, request);
+    } catch (err) {
+      console.error('[POST votes/round/new]', err.message);
+      return jsonResponse({ error: 'Failed to create round.' }, 500, env, request);
+    }
+  }
+
+  // GET /api/votes/nominations — get all nominations for active round
+  if (path === '/api/votes/nominations' && method === 'GET') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var round = await sbSelectOne(env, 'vote_rounds',
+        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&status=eq.open&order=created_at.desc');
+      if (!round) return jsonResponse([], 200, env, request);
+      var noms = await sbSelect(env, 'vote_nominations',
+        'round_id=eq.' + encodeURIComponent(round.id) + '&order=created_at.asc');
+      return jsonResponse(noms.map(toNomination), 200, env, request);
+    } catch (err) {
+      console.error('[GET votes/nominations]', err.message);
+      return jsonResponse({ error: 'Failed to get nominations.' }, 500, env, request);
+    }
+  }
+
+  // POST /api/votes/nominations — nominate a game
+  if (path === '/api/votes/nominations' && method === 'POST') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var b = await request.json();
+      // Get or create active round
+      var round = await sbSelectOne(env, 'vote_rounds',
+        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&status=eq.open&order=created_at.desc');
+      if (!round) {
+        round = await sbInsert(env, 'vote_rounds', {
+          id: newId(), guild_id: request.guildId, status: 'open',
+          created_by: request.session.userId,
+        });
+      }
+      // Check duplicate
+      if (b.steamId) {
+        var existing = await sbSelectOne(env, 'vote_nominations',
+          'round_id=eq.' + encodeURIComponent(round.id) +
+          '&steam_id=eq.' + encodeURIComponent(String(b.steamId)));
+        if (existing) return jsonResponse({ error: 'This game is already nominated.' }, 409, env, request);
+      }
+      var nom = await sbInsert(env, 'vote_nominations', {
+        id: newId(), round_id: round.id, guild_id: request.guildId,
+        steam_id: b.steamId ? String(b.steamId) : null,
+        name: b.name, cover_url: b.coverUrl || null,
+        steam_url: b.steamUrl || null, platforms: b.platforms || '',
+        nominated_by:          request.session.userId,
+        nominated_by_name:     request.session.name,
+        nominated_by_username: request.session.username,
+        voters: '[]',
+      });
+      return jsonResponse(toNomination(nom), 201, env, request);
+    } catch (err) {
+      console.error('[POST votes/nominations]', err.message);
+      return jsonResponse({ error: 'Failed to nominate game.' }, 500, env, request);
+    }
+  }
+
+  // POST /api/votes/nominations/:id/vote — toggle vote
+  var voteMatch = path.match(/^\/api\/votes\/nominations\/([^/]+)\/vote$/);
+  if (voteMatch && method === 'POST') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var nomId = voteMatch[1];
+      var nom   = await sbSelectOne(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId));
+      if (!nom) return jsonResponse({ error: 'Nomination not found.' }, 404, env, request);
+      var userId = request.session.userId;
+      var voters = [];
+      try { voters = JSON.parse(nom.voters || '[]'); } catch (e) {}
+      var alreadyVoted = voters.includes(userId);
+
+      if (alreadyVoted) {
+        voters = voters.filter(function(v) { return v !== userId; });
+      } else {
+        // Remove vote from any other nomination in this round
+        var allNoms = await sbSelect(env, 'vote_nominations',
+          'round_id=eq.' + encodeURIComponent(nom.round_id));
+        for (var j = 0; j < allNoms.length; j++) {
+          var other = allNoms[j];
+          if (other.id === nomId) continue;
+          var otherVoters = [];
+          try { otherVoters = JSON.parse(other.voters || '[]'); } catch (e) {}
+          if (otherVoters.includes(userId)) {
+            otherVoters = otherVoters.filter(function(v) { return v !== userId; });
+            await sbUpdate(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(other.id),
+              { voters: JSON.stringify(otherVoters) });
+          }
+        }
+        voters.push(userId);
+      }
+
+      await sbUpdate(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId),
+        { voters: JSON.stringify(voters) });
+      var updated = await sbSelectOne(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId));
+      return jsonResponse(toNomination(updated), 200, env, request);
+    } catch (err) {
+      console.error('[POST votes/vote]', err.message);
+      return jsonResponse({ error: 'Vote failed.' }, 500, env, request);
+    }
+  }
+
+  // DELETE /api/votes/nominations/:id — remove own nomination
+  var delNomMatch = path.match(/^\/api\/votes\/nominations\/([^/]+)$/);
+  if (delNomMatch && method === 'DELETE') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var nom = await sbSelectOne(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(delNomMatch[1]));
+      if (!nom) return jsonResponse({ error: 'Not found.' }, 404, env, request);
+      if (nom.nominated_by !== request.session.userId) {
+        return jsonResponse({ error: 'You can only remove your own nominations.' }, 403, env, request);
+      }
+      await sbDelete(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(delNomMatch[1]));
+      return jsonResponse({ ok: true }, 200, env, request);
+    } catch (err) {
+      console.error('[DELETE votes/nomination]', err.message);
+      return jsonResponse({ error: 'Failed to remove nomination.' }, 500, env, request);
+    }
   }
 
   return jsonResponse({ error: 'Not found.' }, 404, env, request);
