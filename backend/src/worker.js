@@ -902,20 +902,19 @@ async function handleRequest(request, env) {
         is_manual: true, added_by: request.session.userId,
         calendar_event_id: null, guild_id: request.guildId,
       });
-      if (b.releaseDate) {
-        var eventId = newId();
-        await sbInsert(env, 'events', {
-          id: eventId, activity_id: null, activity_name: b.name,
-          activity_color: '#7c3aed', activity_icon: '🎮',
-          date: b.releaseDate, start_time: null, end_time: null,
-          proposed_by: null, proposed_by_name: b.name,
-          proposed_by_username: 'game-release', attendees: '[]',
-          steam_url: b.steamUrl || null,
-          guild_id: request.guildId,
-        });
-        await sbUpdate(env, 'watched_games', 'id=eq.' + encodeURIComponent(saved.id), { calendar_event_id: eventId });
-        saved.calendar_event_id = eventId;
-      }
+      var eventId = newId();
+      var eventDate = b.releaseDate || new Date().toISOString().slice(0, 10);
+      await sbInsert(env, 'events', {
+        id: eventId, activity_id: null, activity_name: b.name,
+        activity_color: '#7c3aed', activity_icon: '🎮',
+        date: eventDate, start_time: null, end_time: null,
+        proposed_by: null, proposed_by_name: b.name,
+        proposed_by_username: 'game-release', attendees: '[]',
+        steam_url: b.steamUrl || null,
+        guild_id: request.guildId,
+      });
+      await sbUpdate(env, 'watched_games', 'id=eq.' + encodeURIComponent(saved.id), { calendar_event_id: eventId });
+      saved.calendar_event_id = eventId;
       return jsonResponse(toGame(saved), 201, env, request);
     } catch (err) {
       console.error('[POST games]', err.message);
