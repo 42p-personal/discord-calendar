@@ -699,6 +699,62 @@ async function handleRequest(request, env) {
     } catch (err) { return jsonResponse({ error: 'Failed to load games.' }, 500, env, request); }
   }
 
+  // ── Steam API proxies ────────────────────────────────────────────
+
+  // GET /api/steam/search?term=X
+  if (path === '/api/steam/search' && method === 'GET') {
+    var ae = await requireAuth(request, env); if (ae) return ae;
+    var term = url.searchParams.get('term') || '';
+    if (term.trim().length < 2) return jsonResponse({ total: 0, items: [] }, 200, env, request);
+    try {
+      var sRes = await fetch(
+        'https://store.steampowered.com/api/storesearch/?term=' + encodeURIComponent(term.trim()) + '&cc=gb&l=en',
+        { cf: { cacheEverything: true, cacheTtl: 300 } }
+      );
+      if (!sRes.ok) throw new Error('Steam search error: ' + sRes.status);
+      return jsonResponse(await sRes.json(), 200, env, request);
+    } catch (err) {
+      console.error('[steam/search]', err.message);
+      return jsonResponse({ error: 'Steam search failed.' }, 500, env, request);
+    }
+  }
+
+  // GET /api/steam/details?appids=A,B,C
+  if (path === '/api/steam/details' && method === 'GET') {
+    var ae = await requireAuth(request, env); if (ae) return ae;
+    var appids = url.searchParams.get('appids') || '';
+    if (!appids.trim()) return jsonResponse({}, 200, env, request);
+    try {
+      var sRes = await fetch(
+        'https://store.steampowered.com/api/appdetails?appids=' + encodeURIComponent(appids) + '&cc=gb&l=en',
+        { cf: { cacheEverything: true, cacheTtl: 3600 } }
+      );
+      if (!sRes.ok) throw new Error('Steam details error: ' + sRes.status);
+      return jsonResponse(await sRes.json(), 200, env, request);
+    } catch (err) {
+      console.error('[steam/details]', err.message);
+      return jsonResponse({ error: 'Steam details failed.' }, 500, env, request);
+    }
+  }
+
+  // GET /api/steam/featured — coming-soon + new releases for default browse view
+  if (path === '/api/steam/featured' && method === 'GET') {
+    var ae = await requireAuth(request, env); if (ae) return ae;
+    try {
+      var sRes = await fetch(
+        'https://store.steampowered.com/api/featuredcategories/?cc=gb&l=en',
+        { cf: { cacheEverything: true, cacheTtl: 600 } }
+      );
+      if (!sRes.ok) throw new Error('Steam featured error: ' + sRes.status);
+      return jsonResponse(await sRes.json(), 200, env, request);
+    } catch (err) {
+      console.error('[steam/featured]', err.message);
+      return jsonResponse({ error: 'Steam featured failed.' }, 500, env, request);
+    }
+  }
+
+  // ── RAWG API proxies (kept for cron job + legacy) ────────────────
+
   // GET /api/rawg/games — flexible RAWG proxy for games.42p.uk
   // Accepts: page, genres, tags, platforms, dates, ordering, search
   if (path === '/api/rawg/games' && method === 'GET') {
