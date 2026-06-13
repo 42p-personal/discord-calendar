@@ -259,7 +259,7 @@ function toEvent(row) {
 function toGame(row) {
   return {
     id:              row.id,
-    rawgId:          row.rawg_id,
+    steamId:         row.rawg_id,
     name:            row.name,
     releaseDate:     row.release_date,
     coverUrl:        row.cover_url,
@@ -887,15 +887,16 @@ async function handleRequest(request, env) {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b = await request.json();
-      if (b.rawgId) {
+      var gameId = b.steamId || b.rawgId || null;
+      if (gameId) {
         var exists = await sbSelectOne(env, 'watched_games',
-          'rawg_id=eq.' + encodeURIComponent(b.rawgId) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
+          'rawg_id=eq.' + encodeURIComponent(gameId) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
         if (exists) return jsonResponse({ error: 'This game is already being tracked.' }, 409, env, request);
       }
       // Games are not activities — they go straight to the calendar as named events.
       // No activity is created or linked; the game name is the event name.
       var saved = await sbInsert(env, 'watched_games', {
-        id: newId(), rawg_id: b.rawgId || null, name: b.name,
+        id: newId(), rawg_id: gameId, name: b.name,
         release_date: b.releaseDate || null, cover_url: b.coverUrl || null,
         platforms: b.platforms || '', steam_url: b.steamUrl || null,
         is_manual: true, added_by: request.session.userId,
