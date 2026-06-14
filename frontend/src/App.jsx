@@ -11,6 +11,30 @@ import MobileCalendar   from './components/MobileCalendar.jsx';
 
 const GUILD_STORAGE_KEY = 'dc_guild';
 
+function Logo42p({ size = 30 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+      style={{ transform: 'rotate(-8deg)', filter: 'drop-shadow(0 2px 8px #7c3aed66)', flexShrink: 0 }}>
+      <rect x="2" y="2" width="60" height="60" rx="18" fill="url(#al1)"/>
+      <rect x="2" y="2" width="60" height="60" rx="18" stroke="url(#al2)" strokeWidth="1.5" fill="none"/>
+      <text x="4" y="44" fontFamily="'Arial Black', Arial, sans-serif" fontWeight="900" fontSize="34" fill="#ffffff" letterSpacing="-2">4</text>
+      <text x="26" y="44" fontFamily="'Arial Black', Arial, sans-serif" fontWeight="900" fontSize="34" fill="url(#al3)" letterSpacing="-2">2</text>
+      <text x="46" y="52" fontFamily="'Arial Black', Arial, sans-serif" fontWeight="900" fontSize="20" fill="#c4b5fd">p</text>
+      <defs>
+        <linearGradient id="al1" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#4c1d95"/><stop offset="100%" stopColor="#7c3aed"/>
+        </linearGradient>
+        <linearGradient id="al2" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.6"/><stop offset="100%" stopColor="#7c3aed" stopOpacity="0"/>
+        </linearGradient>
+        <linearGradient id="al3" x1="26" y1="10" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#e9d5ff"/><stop offset="100%" stopColor="#a78bfa"/>
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
 function indexEvents(arr) {
   return arr.reduce(function(map, ev) {
     if (!map[ev.date]) map[ev.date] = [];
@@ -427,10 +451,8 @@ export default function App() {
       {/* Top bar */}
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '0.5px solid ' + T.border, background: T.bgCard, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px ' + T.accent + '44' }}>
-            <i className="ti ti-calendar-event" style={{ fontSize: 16, color: '#fff' }} aria-hidden="true" />
-          </div>
-          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.01em' }}>Discord Games Calendar</span>
+          <Logo42p size={30} />
+          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.01em' }}>42p Game Calendar</span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -103,7 +103,7 @@ export default function AuthScreen({ onAuthenticated, apiUrl }) {
             letterSpacing: '-0.03em',
             lineHeight: 1.1,
           }}>
-            Discord Games Calendar
+            42p Game Calendar
           </h1>
 
           <p style={{
@@ -114,7 +114,7 @@ export default function AuthScreen({ onAuthenticated, apiUrl }) {
             textTransform: 'uppercase',
             letterSpacing: '0.12em',
           }}>
-            SIGN UP NOW NOW NOW!!
+            The squad's gaming hub
           </p>
         </div>
 
