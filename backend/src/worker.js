@@ -80,10 +80,23 @@ async function sbDelete(env, table, filters) {
 
 function newId() { return crypto.randomUUID(); }
 
+var ALLOWED_ORIGINS = [
+  'https://42p.uk',
+  'https://calendar.42p.uk',
+  'https://games.42p.uk',
+  'https://votes.42p.uk',
+];
+
 function getCorsHeaders(request, env) {
-  var origin = (request && request.headers.get('Origin')) || env.FRONTEND_URL || '*';
+  var reqOrigin = request && request.headers.get('Origin');
+  // Only reflect origins we trust. Echoing an arbitrary Origin back alongside
+  // Allow-Credentials would let any site make authenticated calls on a user's behalf.
+  var allowOrigin = (reqOrigin && ALLOWED_ORIGINS.indexOf(reqOrigin) !== -1)
+    ? reqOrigin
+    : (env.FRONTEND_URL || ALLOWED_ORIGINS[0]);
   return {
-    'Access-Control-Allow-Origin':      origin,
+    'Access-Control-Allow-Origin':      allowOrigin,
+    'Vary':                             'Origin',
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods':     'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers':     'Content-Type, X-Guild-ID',
@@ -184,11 +197,37 @@ function getGuildId(request) {
   return request.headers.get('X-Guild-ID') || null;
 }
 
+// Best-effort, per-isolate cache of each user's Discord guild IDs so we don't
+// hit the Discord API on every guild-scoped request. Short TTL keeps it fresh.
+var _guildCache = new Map(); // userId -> { ids: Set<string>, exp: number (ms) }
+var GUILD_CACHE_TTL = 60 * 1000;
+
+async function userGuildIds(session) {
+  var now    = Date.now();
+  var cached = _guildCache.get(session.userId);
+  if (cached && cached.exp > now) return cached.ids;
+  if (!session.accessToken) return null;
+  var guilds = await fetchUserGuilds(session.accessToken);
+  var ids    = new Set(guilds.map(function(g) { return g.id; }));
+  _guildCache.set(session.userId, { ids: ids, exp: now + GUILD_CACHE_TTL });
+  return ids;
+}
+
 async function requireAuthAndGuild(request, env) {
   var authErr = await requireAuth(request, env);
   if (authErr) return authErr;
   var guildId = getGuildId(request);
   if (!guildId) return jsonResponse({ error: 'No server selected. Please select a Discord server.' }, 400, env, request);
+  // The guild ID arrives in a client header — verify the signed-in user is
+  // actually a member of it. Never trust the header on its own.
+  try {
+    var memberIds = await userGuildIds(request.session);
+    if (!memberIds) return jsonResponse({ error: 'Session expired. Please sign in again.' }, 401, env, request);
+    if (!memberIds.has(guildId)) return jsonResponse({ error: 'You do not have access to this server.' }, 403, env, request);
+  } catch (err) {
+    console.error('[guild auth]', err.message);
+    return jsonResponse({ error: 'Could not verify server membership. Please try again.' }, 502, env, request);
+  }
   request.guildId = guildId;
   return null;
 }
@@ -361,7 +400,7 @@ async function searchRawgGames(env, query) {
 // Runs for ALL guilds that have at least one watched game
 // ============================================================
 
-async function runGameSync(env) {
+async function runGameSync(env, onlyGuildId) {
   console.log('[cron] Starting game sync...');
 
   var rawgData;
@@ -376,6 +415,11 @@ async function runGameSync(env) {
   var allWatched = await sbSelect(env, 'watched_games',
     'is_manual=eq.false&select=guild_id,rawg_id').catch(function() { return []; });
   var guildIds   = [...new Set(allWatched.map(function(g) { return g.guild_id; }).filter(Boolean))];
+
+  // A manual trigger scopes the sync to the caller's own guild only — and always
+  // includes it, even if it has no tracked games yet. The cron passes no guild
+  // and syncs every guild that has watched games.
+  if (onlyGuildId) guildIds = [onlyGuildId];
 
   if (guildIds.length === 0) {
     console.log('[cron] No guilds with watched games yet, skipping.');
@@ -970,7 +1014,7 @@ async function handleRequest(request, env) {
   if (path === '/api/games/sync' && method === 'POST') {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      await runGameSync(env);
+      await runGameSync(env, request.guildId);
       return jsonResponse({ ok: true, message: 'Sync complete.' }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Sync failed: ' + err.message }, 500, env, request); }
   }
