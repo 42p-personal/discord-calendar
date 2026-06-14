@@ -8,6 +8,7 @@ import TimePickerModal  from './components/TimePickerModal.jsx';
 import GuildPicker      from './components/GuildPicker.jsx';
 import GuildSwitcher    from './components/GuildSwitcher.jsx';
 import MobileCalendar   from './components/MobileCalendar.jsx';
+import WhosAround        from './components/WhosAround.jsx';
 
 const GUILD_STORAGE_KEY = 'dc_guild';
 
@@ -83,6 +84,7 @@ export default function App() {
 
   // ── mobile detection ──────────────────────────────────────
   var [isMobile, setIsMobile] = useState(function() { return window.innerWidth < 768; });
+  var [showWhosAround, setShowWhosAround] = useState(false);
   useEffect(function() {
     function onResize() { setIsMobile(window.innerWidth < 768); }
     window.addEventListener('resize', onResize);
@@ -349,6 +351,12 @@ export default function App() {
       >
         <ActivityIcon icon={ev.activityIcon} size={compact ? 10 : 13} />
         <span style={{ fontSize: compact ? 9 : 11, color: T.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.activityName}</span>
+        {ev.attendees && ev.attendees.length > 0 && (
+          <span title={ev.attendees.length + ' going'}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: compact ? 8 : 10, fontWeight: 700, color: ev.activityColor, flexShrink: 0 }}>
+            <i className="ti ti-users" style={{ fontSize: compact ? 9 : 11 }} />{ev.attendees.length}
+          </span>
+        )}
       </div>
     );
   }
@@ -357,7 +365,7 @@ export default function App() {
 
   if (appState === 'loading') {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#111318', color: '#8b8ca8', fontSize: 14, gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', background: '#111318', color: '#8b8ca8', fontSize: 14, gap: 10 }}>
         <i className="ti ti-calendar" style={{ fontSize: 22, color: '#6366f1' }} aria-hidden="true" />
         Loading…
       </div>
@@ -391,6 +399,7 @@ export default function App() {
   // ── MOBILE ────────────────────────────────────────────────
   if (isMobile) {
     return (
+      <>
       <MobileCalendar
         events={events}
         activities={activities}
@@ -419,7 +428,13 @@ export default function App() {
         currentGuild={currentGuild}
         guilds={guilds}
         onGuildSwitch={handleGuildSwitch}
+        onWhosAround={function() { setShowWhosAround(true); }}
       />
+      {showWhosAround && (
+        <WhosAround currentUser={currentUser} T={T} darkMode={darkMode}
+          onClose={function() { setShowWhosAround(false); }} />
+      )}
+      </>
     );
   }
 
@@ -474,6 +489,12 @@ export default function App() {
             <span style={{ fontSize: 14, lineHeight: 1 }}>🗳️</span>
             <span style={{ fontSize: 12 }}>Votes</span>
           </a>
+
+          <button onClick={function() { setShowWhosAround(true); }} className="dc-hover"
+            style={btn({ padding: '6px 10px', color: T.textSub })} title="See when the squad is free">
+            <span style={{ fontSize: 14, lineHeight: 1 }}>🟢</span>
+            <span style={{ fontSize: 12 }}>Who's Around</span>
+          </button>
 
           <div style={{ display: 'flex', gap: 3, background: T.bgHover, borderRadius: 8, padding: 3, border: '0.5px solid ' + T.border }}>
             {['day', 'week', 'month'].map(function(v) {
@@ -713,6 +734,11 @@ export default function App() {
           onConfirm={handleTimePickerConfirm}
           onCancel={function() { setTimePicker(null); }}
         />
+      )}
+
+      {showWhosAround && (
+        <WhosAround currentUser={currentUser} T={T} darkMode={darkMode}
+          onClose={function() { setShowWhosAround(false); }} />
       )}
     </div>
   );

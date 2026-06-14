@@ -18,6 +18,7 @@ export default function EventPopover({ popover, currentUser, darkMode, T, onClos
   const myId        = currentUser.userId || currentUser.id;
   const isAttending = attendees.some(function(a) { return a.id === myId; });
   const isProposer  = ev.proposedBy === myId;
+  const isRelease   = ev.proposedByUsername === 'game-release';
 
   async function handleJoin() {
     setBusy(true);
@@ -126,10 +127,12 @@ export default function EventPopover({ popover, currentUser, darkMode, T, onClos
         {/* Attendees */}
         <div style={{ padding: '10px 16px', borderBottom: '0.5px solid ' + T.border }}>
           <p style={{ margin: '0 0 8px', fontSize: 10, color: T.textMute, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Attending ({attendees.length})
+            {isRelease ? 'Playing on launch' : 'Attending'} ({attendees.length})
           </p>
           {attendees.length === 0 ? (
-            <p style={{ fontSize: 12, color: T.textMute, margin: 0 }}>No one yet — be the first!</p>
+            <p style={{ fontSize: 12, color: T.textMute, margin: 0 }}>
+              {isRelease ? 'No one yet — RSVP if you’ll grab it!' : 'No one yet — be the first!'}
+            </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {attendees.map(function(a) {
@@ -168,7 +171,7 @@ export default function EventPopover({ popover, currentUser, darkMode, T, onClos
                 }}
               >
                 <i className="ti ti-user-minus" aria-hidden="true" />
-                {busy ? 'Leaving\u2026' : 'Leave event'}
+                {busy ? (isRelease ? 'Updating\u2026' : 'Leaving\u2026') : (isRelease ? 'Cancel RSVP' : 'Leave event')}
               </button>
             ) : (
               <button
@@ -184,7 +187,7 @@ export default function EventPopover({ popover, currentUser, darkMode, T, onClos
                 }}
               >
                 <i className="ti ti-user-plus" aria-hidden="true" />
-                {busy ? 'Joining\u2026' : 'Join event'}
+                {busy ? (isRelease ? 'Updating\u2026' : 'Joining\u2026') : (isRelease ? 'RSVP \u2014 I\u2019ll play' : 'Join event')}
               </button>
             )
           )}

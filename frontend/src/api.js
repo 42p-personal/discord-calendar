@@ -43,6 +43,10 @@ export const api = {
     join:   (id)          => request('POST',   `/api/events/${id}/join`),
     leave:  (id)          => request('POST',   `/api/events/${id}/leave`),
   },
+  availability: {
+    list: ()       => request('GET', '/api/availability'),
+    save: (slots)  => request('PUT', '/api/availability', { slots }),
+  },
   games: {
     list:   ()            => request('GET',    '/api/games'),
     search: (q)           => request('GET',    `/api/games/search?q=${encodeURIComponent(q)}`, null, true),

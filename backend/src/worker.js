@@ -60,11 +60,26 @@ async function sbUpsert(env, table, data) {
   return Array.isArray(rows) ? rows[0] : rows;
 }
 
+async function sbUpsertOn(env, table, conflictCols, data) {
+  var res = await fetch(env.SUPABASE_URL + '/rest/v1/' + table + '?on_conflict=' + conflictCols, {
+    method: 'POST',
+    headers: Object.assign({}, sbHeaders(env), { 'Prefer': 'resolution=merge-duplicates,return=representation' }),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('SB UPSERT ' + table + ': ' + await res.text());
+  var rows = await res.json();
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
 async function sbUpdate(env, table, filters, data) {
   var res = await fetch(env.SUPABASE_URL + '/rest/v1/' + table + '?' + filters, {
     method: 'PATCH', headers: sbHeaders(env), body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('SB UPDATE ' + table + ': ' + await res.text());
+  // Prefer: return=representation is set, so PATCH returns the updated rows —
+  // callers that need the new state can use this instead of a follow-up SELECT.
+  var rows = await res.json().catch(function() { return []; });
+  return Array.isArray(rows) ? rows : [rows];
 }
 
 async function sbDelete(env, table, filters) {
@@ -317,9 +332,39 @@ function toRound(row) {
     id:        row.id,
     guildId:   row.guild_id,
     status:    row.status,
+    closesAt:  row.closes_at || null,
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
+}
+
+function toAvailability(row) {
+  var slots = [];
+  try { slots = JSON.parse(row.slots || '[]'); } catch (e) {}
+  return {
+    userId:    row.user_id,
+    userName:  row.user_name,
+    slots:     slots,
+    updatedAt: row.updated_at,
+  };
+}
+
+// Flip an open round to closed once its deadline has passed. Returns the
+// (possibly updated) round so callers always see current status.
+async function autoCloseExpiredRound(env, round) {
+  if (round && round.status === 'open' && round.closes_at
+      && new Date(round.closes_at).getTime() <= Date.now()) {
+    var rows = await sbUpdate(env, 'vote_rounds', 'id=eq.' + encodeURIComponent(round.id), { status: 'closed' });
+    return (rows && rows[0]) || Object.assign({}, round, { status: 'closed' });
+  }
+  return round;
+}
+
+// Latest round for a guild (any status), auto-closed if its deadline passed.
+async function latestRound(env, guildId) {
+  var round = await sbSelectOne(env, 'vote_rounds',
+    'guild_id=eq.' + encodeURIComponent(guildId) + '&order=created_at.desc');
+  return autoCloseExpiredRound(env, round);
 }
 
 function toNomination(row) {
@@ -430,7 +475,11 @@ async function runGameSync(env, onlyGuildId) {
   var watchedSet = new Set(allWatched.map(function(r) { return r.guild_id + ':' + r.rawg_id; }));
 
   var games = rawgData.results || [];
-  var added = 0;
+
+  // Collect all new rows, then do two bulk inserts (PostgREST accepts arrays)
+  // instead of 2 sequential round-trips per game.
+  var newWatched = [];
+  var newEvents  = [];
 
   for (var gi = 0; gi < guildIds.length; gi++) {
     var guildId = guildIds[gi];
@@ -450,14 +499,13 @@ async function runGameSync(env, onlyGuildId) {
 
       // Pre-generate eventId so no follow-up UPDATE is needed
       var eventId = newId();
-      await sbInsert(env, 'watched_games', {
+      newWatched.push({
         id: newId(), rawg_id: game.id, name: game.name,
         release_date: game.released, cover_url: game.background_image || null,
         platforms: platforms, is_manual: false, added_by: null,
         calendar_event_id: eventId, guild_id: guildId,
       });
-
-      await sbInsert(env, 'events', {
+      newEvents.push({
         id: eventId, activity_id: null, activity_name: game.name,
         activity_color: '#7c3aed', activity_icon: '🎮',
         date: game.released, start_time: null, end_time: null,
@@ -465,16 +513,15 @@ async function runGameSync(env, onlyGuildId) {
         proposed_by_username: 'game-release', attendees: '[]',
         guild_id: guildId,
       });
-
-      added++;
     }
   }
 
-  // Purge expired legacy sessions left over from pre-JWT era
-  await sbDelete(env, 'session',
-    'expire=lt.' + encodeURIComponent(new Date().toISOString())).catch(function() {});
+  if (newWatched.length) {
+    await sbInsert(env, 'watched_games', newWatched);
+    await sbInsert(env, 'events', newEvents);
+  }
 
-  console.log('[cron] Sync complete. Added:', added);
+  console.log('[cron] Sync complete. Added:', newWatched.length);
 }
 
 // ============================================================
@@ -1027,8 +1074,7 @@ async function handleRequest(request, env) {
   if (path === '/api/votes/round' && method === 'GET') {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      var round = await sbSelectOne(env, 'vote_rounds',
-        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&status=eq.open&order=created_at.desc');
+      var round = await latestRound(env, request.guildId);
       if (!round) {
         round = await sbInsert(env, 'vote_rounds', {
           id: newId(), guild_id: request.guildId, status: 'open',
@@ -1042,20 +1088,42 @@ async function handleRequest(request, env) {
     }
   }
 
+  // PUT /api/votes/round/deadline — set or clear the active round's closing time
+  if (path === '/api/votes/round/deadline' && method === 'PUT') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var b     = await request.json();
+      var round = await latestRound(env, request.guildId);
+      if (!round) return jsonResponse({ error: 'No active round.' }, 404, env, request);
+      if (round.status === 'closed') return jsonResponse({ error: 'This round is already closed.' }, 409, env, request);
+      var closesAt = b.closesAt ? new Date(b.closesAt).toISOString() : null;
+      var rows = await sbUpdate(env, 'vote_rounds', 'id=eq.' + encodeURIComponent(round.id), { closes_at: closesAt });
+      return jsonResponse(toRound(rows[0] || Object.assign({}, round, { closes_at: closesAt })), 200, env, request);
+    } catch (err) {
+      console.error('[PUT votes/round/deadline]', err.message);
+      return jsonResponse({ error: 'Failed to set deadline.' }, 500, env, request);
+    }
+  }
+
   // POST /api/votes/round/new — start a fresh round (closes existing)
   if (path === '/api/votes/round/new' && method === 'POST') {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      // Close all open rounds for this guild
+      var nb = await request.json().catch(function() { return {}; });
+      // Close all open rounds for this guild (concurrently)
       var openRounds = await sbSelect(env, 'vote_rounds',
         'guild_id=eq.' + encodeURIComponent(request.guildId) + '&status=eq.open');
-      for (var i = 0; i < openRounds.length; i++) {
-        await sbUpdate(env, 'vote_rounds', 'id=eq.' + encodeURIComponent(openRounds[i].id), { status: 'closed' });
-      }
-      var newRound = await sbInsert(env, 'vote_rounds', {
+      await Promise.all(openRounds.map(function(r) {
+        return sbUpdate(env, 'vote_rounds', 'id=eq.' + encodeURIComponent(r.id), { status: 'closed' });
+      }));
+      var roundData = {
         id: newId(), guild_id: request.guildId, status: 'open',
         created_by: request.session.userId,
-      });
+      };
+      // Only set closes_at when a deadline is given, so round creation stays
+      // safe even before the closes_at column migration is applied.
+      if (nb.closesAt) roundData.closes_at = new Date(nb.closesAt).toISOString();
+      var newRound = await sbInsert(env, 'vote_rounds', roundData);
       return jsonResponse(toRound(newRound), 201, env, request);
     } catch (err) {
       console.error('[POST votes/round/new]', err.message);
@@ -1067,8 +1135,7 @@ async function handleRequest(request, env) {
   if (path === '/api/votes/nominations' && method === 'GET') {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      var round = await sbSelectOne(env, 'vote_rounds',
-        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&status=eq.open&order=created_at.desc');
+      var round = await latestRound(env, request.guildId);
       if (!round) return jsonResponse([], 200, env, request);
       var noms = await sbSelect(env, 'vote_nominations',
         'round_id=eq.' + encodeURIComponent(round.id) + '&order=created_at.asc');
@@ -1084,9 +1151,11 @@ async function handleRequest(request, env) {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b = await request.json();
-      // Get or create active round
-      var round = await sbSelectOne(env, 'vote_rounds',
-        'guild_id=eq.' + encodeURIComponent(request.guildId) + '&status=eq.open&order=created_at.desc');
+      // Get the active round; refuse if voting has closed, create one if none exists.
+      var round = await latestRound(env, request.guildId);
+      if (round && round.status === 'closed') {
+        return jsonResponse({ error: 'Voting is closed. Start a new round to nominate.' }, 409, env, request);
+      }
       if (!round) {
         round = await sbInsert(env, 'vote_rounds', {
           id: newId(), guild_id: request.guildId, status: 'open',
@@ -1125,34 +1194,49 @@ async function handleRequest(request, env) {
       var nomId = voteMatch[1];
       var nom   = await sbSelectOne(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId));
       if (!nom) return jsonResponse({ error: 'Nomination not found.' }, 404, env, request);
+      // Lock voting once the round has closed (e.g. its deadline passed).
+      var voteRound = await autoCloseExpiredRound(env,
+        await sbSelectOne(env, 'vote_rounds', 'id=eq.' + encodeURIComponent(nom.round_id)));
+      if (voteRound && voteRound.status === 'closed') {
+        return jsonResponse({ error: 'Voting is closed for this round.' }, 409, env, request);
+      }
       var userId = request.session.userId;
       var voters = [];
       try { voters = JSON.parse(nom.voters || '[]'); } catch (e) {}
       var alreadyVoted = voters.includes(userId);
+      var updated;
 
       if (alreadyVoted) {
         voters = voters.filter(function(v) { return v !== userId; });
+        var rows = await sbUpdate(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId),
+          { voters: JSON.stringify(voters) });
+        updated = rows[0];
       } else {
-        // Remove vote from any other nomination in this round
+        // Single vote per round: clear this user from any other nomination, then
+        // add it here. Run the writes concurrently rather than one at a time, and
+        // use the PATCH representation instead of a follow-up SELECT.
         var allNoms = await sbSelect(env, 'vote_nominations',
           'round_id=eq.' + encodeURIComponent(nom.round_id));
+        var writes = [];
         for (var j = 0; j < allNoms.length; j++) {
           var other = allNoms[j];
           if (other.id === nomId) continue;
           var otherVoters = [];
           try { otherVoters = JSON.parse(other.voters || '[]'); } catch (e) {}
           if (otherVoters.includes(userId)) {
-            otherVoters = otherVoters.filter(function(v) { return v !== userId; });
-            await sbUpdate(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(other.id),
-              { voters: JSON.stringify(otherVoters) });
+            var cleared = otherVoters.filter(function(v) { return v !== userId; });
+            writes.push(sbUpdate(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(other.id),
+              { voters: JSON.stringify(cleared) }));
           }
         }
         voters.push(userId);
+        writes.push(
+          sbUpdate(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId),
+            { voters: JSON.stringify(voters) }).then(function(r) { updated = r[0]; })
+        );
+        await Promise.all(writes);
       }
 
-      await sbUpdate(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId),
-        { voters: JSON.stringify(voters) });
-      var updated = await sbSelectOne(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId));
       return jsonResponse(toNomination(updated), 200, env, request);
     } catch (err) {
       console.error('[POST votes/vote]', err.message);
@@ -1175,6 +1259,43 @@ async function handleRequest(request, env) {
     } catch (err) {
       console.error('[DELETE votes/nomination]', err.message);
       return jsonResponse({ error: 'Failed to remove nomination.' }, 500, env, request);
+    }
+  }
+
+  // ============================================================
+  // AVAILABILITY — "Who's Around" (weekly slots per user, per guild)
+  // ============================================================
+
+  // GET /api/availability — everyone's slots for the current guild
+  if (path === '/api/availability' && method === 'GET') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var rows = await sbSelect(env, 'availability',
+        'guild_id=eq.' + encodeURIComponent(request.guildId));
+      return jsonResponse(rows.map(toAvailability), 200, env, request);
+    } catch (err) {
+      console.error('[GET availability]', err.message);
+      return jsonResponse({ error: 'Failed to load availability.' }, 500, env, request);
+    }
+  }
+
+  // PUT /api/availability — upsert the signed-in user's slots
+  if (path === '/api/availability' && method === 'PUT') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var b     = await request.json();
+      var slots = Array.isArray(b.slots) ? b.slots.filter(function(s) { return typeof s === 'string'; }) : [];
+      var row   = await sbUpsertOn(env, 'availability', 'guild_id,user_id', {
+        guild_id:   request.guildId,
+        user_id:    request.session.userId,
+        user_name:  request.session.name,
+        slots:      JSON.stringify(slots),
+        updated_at: new Date().toISOString(),
+      });
+      return jsonResponse(toAvailability(row), 200, env, request);
+    } catch (err) {
+      console.error('[PUT availability]', err.message);
+      return jsonResponse({ error: 'Failed to save availability.' }, 500, env, request);
     }
   }
 

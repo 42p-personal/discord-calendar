@@ -536,7 +536,7 @@ function EventDetailOverlay({ ev, currentUser, onClose, onAttendeesChange }) {
 }
 
 /* ---- Free/availability screen (shows upcoming events attendance) ---- */
-function FreeScreen({ events }) {
+function FreeScreen({ events, onWhosAround }) {
   const today = todayIso();
   const upcoming = [];
   Object.entries(events).forEach(([dk, evts]) => {
@@ -553,6 +553,12 @@ function FreeScreen({ events }) {
         </div>
       </div>
       <div className="aria-body aria-vscroll" style={{ padding: '0 16px 24px' }}>
+        {onWhosAround && (
+          <button onClick={onWhosAround}
+            style={{ width: '100%', marginBottom: 16, padding: '13px', borderRadius: 'var(--r-lg)', border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' }}>
+            🟢 Who's Around this week
+          </button>
+        )}
         {upcoming.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--mute)', fontSize: 13, padding: 28 }}>No upcoming events.</div>
         )}
@@ -668,6 +674,7 @@ export default function MobileCalendar({
   onPropose, onAttendeesChange,
   onToggleDark, onSignOut,
   currentGuild, guilds, onGuildSwitch,
+  onWhosAround,
 }) {
   const [tab, setTab] = useState('cal');
   const [detailEvent, setDetailEvent] = useState(null);
@@ -703,7 +710,7 @@ export default function MobileCalendar({
         <ProposeScreen activities={activities} onPropose={onPropose} setTab={setTab} />
       )}
       {tab === 'free' && (
-        <FreeScreen events={events} />
+        <FreeScreen events={events} onWhosAround={onWhosAround} />
       )}
       {tab === 'squad' && (
         <SquadScreen
