@@ -214,7 +214,8 @@ function getGuildId(request) {
 
 // Best-effort, per-isolate cache of each user's Discord guild IDs so we don't
 // hit the Discord API on every guild-scoped request. Short TTL keeps it fresh.
-var _guildCache = new Map(); // userId -> { ids: Set<string>, exp: number (ms) }
+var _guildCache    = new Map(); // userId -> { ids: Set<string>, exp: number (ms) }
+var _guildInflight = new Map(); // userId -> Promise<Set<string>>
 var GUILD_CACHE_TTL = 60 * 1000;
 
 async function userGuildIds(session) {
@@ -222,10 +223,22 @@ async function userGuildIds(session) {
   var cached = _guildCache.get(session.userId);
   if (cached && cached.exp > now) return cached.ids;
   if (!session.accessToken) return null;
-  var guilds = await fetchUserGuilds(session.accessToken);
-  var ids    = new Set(guilds.map(function(g) { return g.id; }));
-  _guildCache.set(session.userId, { ids: ids, exp: now + GUILD_CACHE_TTL });
-  return ids;
+
+  // Coalesce concurrent cache misses — the frontend fires several guild-scoped
+  // requests in parallel on load, so share one Discord call between them.
+  var inflight = _guildInflight.get(session.userId);
+  if (inflight) return inflight;
+
+  var p = fetchUserGuilds(session.accessToken)
+    .then(function(guilds) {
+      var ids = new Set(guilds.map(function(g) { return g.id; }));
+      _guildCache.set(session.userId, { ids: ids, exp: Date.now() + GUILD_CACHE_TTL });
+      return ids;
+    })
+    .finally(function() { _guildInflight.delete(session.userId); });
+
+  _guildInflight.set(session.userId, p);
+  return p;
 }
 
 async function requireAuthAndGuild(request, env) {
