@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api.js';
 import { MONTHS, DAYS, isoDate, getMonthMeta, uid } from '../constants.js';
 import { ActivityIcon } from './ActivityManager.jsx';
+import { TimeWheelPicker } from './WheelTimePicker.jsx';
 
 /* ---- design tokens (Aria look) injected once ---- */
 (function injectAria() {
@@ -338,8 +339,6 @@ function ProposeScreen({ activities, onPropose, setTab }) {
     return { d, dk: isoDate(d.getFullYear(), d.getMonth(), d.getDate()), isToday: i === 0 };
   });
 
-  const times = ['18:00', '19:00', '19:30', '20:00', '20:30', '21:00', '21:30', '22:00'];
-
   const [activity, setActivity] = useState(activities[0] || null);
   const [day, setDay] = useState(days[0]);
   const [time, setTime] = useState('20:00');
@@ -401,16 +400,13 @@ function ProposeScreen({ activities, onPropose, setTab }) {
           ))}
         </div>
 
-        {/* Time chips */}
+        {/* Time wheel */}
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.10em', textTransform: 'uppercase', color: 'var(--mute)', padding: '16px 18px 6px' }}>
           Start time
         </div>
-        <div className="aria-scroll" style={{ display: 'flex', gap: 8, padding: '0 16px 16px' }}>
-          {times.map(t => (
-            <button key={t} className={`tchip ${t === time ? 'on' : ''}`} onClick={() => setTime(t)}>
-              {fmtTime(t)}
-            </button>
-          ))}
+        <div style={{ padding: '0 16px 16px' }}>
+          <TimeWheelPicker value={time} onChange={setTime}
+            bg="var(--paper)" accent="var(--accent)" ink="var(--mute)" />
         </div>
       </div>
 
