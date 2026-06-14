@@ -12,8 +12,8 @@ import { TimeWheelPicker } from './WheelTimePicker.jsx';
   s.textContent = `
     @import url('https://fonts.googleapis.com/css2?family=Inter+Tight:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
     .aria-mob {
-      --accent:    #5865f2;
-      --accent-dk: #4049c8;
+      --accent:    #6366f1;
+      --accent-dk: #4f46e5;
       --accent-tint: #eef0ff;
       --ring:      rgba(88,101,242,0.20);
       --paper:     #ffffff;

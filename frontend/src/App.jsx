@@ -451,8 +451,11 @@ export default function App() {
       {/* Top bar */}
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '0.5px solid ' + T.border, background: T.bgCard, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Logo42p size={30} />
-          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.01em' }}>42p Game Calendar</span>
+          <a href="https://42p.uk" style={{ display: 'flex', flexShrink: 0 }}><Logo42p size={30} /></a>
+          <div>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: 15, letterSpacing: '-0.01em' }}>42p Game Calendar</p>
+            <p style={{ margin: 0, fontSize: 10, color: T.textSub }}>The squad's gaming hub</p>
+          </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
