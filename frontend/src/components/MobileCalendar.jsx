@@ -640,7 +640,21 @@ function SquadScreen({ currentUser, currentGuild, guilds, onGuildSwitch, onSignO
           </>
         )}
 
-        <div style={{ marginTop: 28 }}>
+        <div style={{ marginTop: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.10em', textTransform: 'uppercase', color: 'var(--mute)', marginBottom: 10 }}>More sites</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <a href="https://games.42p.uk" target="_blank" rel="noopener noreferrer"
+              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 'var(--r)', background: 'var(--paper)', boxShadow: 'inset 0 0 0 1px var(--line)', textDecoration: 'none', color: 'var(--ink)', fontWeight: 600, fontSize: 14 }}>
+              🎮 <span>42p Games</span>
+            </a>
+            <a href="https://votes.42p.uk" target="_blank" rel="noopener noreferrer"
+              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 'var(--r)', background: 'var(--paper)', boxShadow: 'inset 0 0 0 1px var(--line)', textDecoration: 'none', color: 'var(--ink)', fontWeight: 600, fontSize: 14 }}>
+              🗳️ <span>42p Votes</span>
+            </a>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
           <button onClick={onSignOut}
             style={{ width: '100%', height: 44, borderRadius: 'var(--r)', background: 'transparent', boxShadow: 'inset 0 0 0 1px var(--line)', color: 'var(--mute)', fontWeight: 600, fontSize: 14 }}>
             Sign out

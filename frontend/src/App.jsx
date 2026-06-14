@@ -441,7 +441,13 @@ export default function App() {
           <a href="https://games.42p.uk" target="_blank" rel="noopener noreferrer" className="dc-hover"
             style={btn({ padding: '6px 10px', color: T.textSub, textDecoration: 'none' })} title="Upcoming game releases">
             <span style={{ fontSize: 14, lineHeight: 1 }}>🎮</span>
-            <span style={{ fontSize: 12 }}>Upcoming Games</span>
+            <span style={{ fontSize: 12 }}>Games</span>
+          </a>
+
+          <a href="https://votes.42p.uk" target="_blank" rel="noopener noreferrer" className="dc-hover"
+            style={btn({ padding: '6px 10px', color: T.textSub, textDecoration: 'none' })} title="Vote for next game">
+            <span style={{ fontSize: 14, lineHeight: 1 }}>🗳️</span>
+            <span style={{ fontSize: 12 }}>Votes</span>
           </a>
 
           <div style={{ display: 'flex', gap: 3, background: T.bgHover, borderRadius: 8, padding: 3, border: '0.5px solid ' + T.border }}>
