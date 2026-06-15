@@ -580,10 +580,14 @@ async function getGuildSettings(env, guildId) {
   };
 }
 
+// Accept the bot token under either casing (the secret may be set as
+// DISCORD_BOT_TOKEN or discord_bot_token).
+function botToken(env) { return env.DISCORD_BOT_TOKEN || env.discord_bot_token || null; }
+
 function discordFetch(env, method, path, body) {
   return fetch(DISCORD_API + path, {
     method: method,
-    headers: { 'Authorization': 'Bot ' + env.DISCORD_BOT_TOKEN, 'Content-Type': 'application/json' },
+    headers: { 'Authorization': 'Bot ' + botToken(env), 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
 }
@@ -617,7 +621,7 @@ function discordEventBody(ev, tz) {
 // Create/update the Discord scheduled event for an event row, given resolved
 // settings. Best-effort: future events only, failures swallowed.
 async function syncEventWithSettings(env, guildId, ev, settings) {
-  if (!env.DISCORD_BOT_TOKEN || !ev || !settings.discordSync) return;
+  if (!botToken(env) || !ev || !settings.discordSync) return;
   try {
     var body = discordEventBody(ev, settings.timezone);
     if (!body || new Date(body.scheduled_start_time).getTime() <= Date.now()) return;
@@ -640,14 +644,14 @@ async function syncEventWithSettings(env, guildId, ev, settings) {
 
 // Fetches settings then syncs a single event (used on create/move/game-add).
 async function maybeSyncEvent(env, guildId, ev) {
-  if (!env.DISCORD_BOT_TOKEN || !ev) return;
+  if (!botToken(env) || !ev) return;
   var settings = await getGuildSettings(env, guildId);
   if (!settings.discordSync) return;
   return syncEventWithSettings(env, guildId, ev, settings);
 }
 
 async function maybeUnsyncEvent(env, guildId, ev) {
-  if (!env.DISCORD_BOT_TOKEN || !ev || !ev.discord_event_id) return;
+  if (!botToken(env) || !ev || !ev.discord_event_id) return;
   try {
     await discordFetch(env, 'DELETE', '/guilds/' + guildId + '/scheduled-events/' + ev.discord_event_id);
   } catch (err) { console.error('[discord unsync]', err.message); }
@@ -655,7 +659,7 @@ async function maybeUnsyncEvent(env, guildId, ev) {
 
 // When sync is turned on, push existing future events to Discord (capped).
 async function bulkSyncFutureEvents(env, guildId, tz) {
-  if (!env.DISCORD_BOT_TOKEN) return;
+  if (!botToken(env)) return;
   var settings = { timezone: tz, discordSync: true };
   try {
     var today = new Date().toISOString().slice(0, 10);
@@ -1460,7 +1464,7 @@ async function handleRequest(request, env, ctx) {
   if (path === '/api/settings' && method === 'GET') {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     var s = await getGuildSettings(env, request.guildId);
-    return jsonResponse({ timezone: s.timezone, discordSync: s.discordSync, botConfigured: !!env.DISCORD_BOT_TOKEN }, 200, env, request);
+    return jsonResponse({ timezone: s.timezone, discordSync: s.discordSync, botConfigured: !!botToken(env) }, 200, env, request);
   }
 
   if (path === '/api/settings' && method === 'PUT') {
@@ -1475,10 +1479,10 @@ async function handleRequest(request, env, ctx) {
         updated_at: new Date().toISOString(),
       });
       // When sync is switched on, push existing future events to Discord.
-      if (ctx && sync && env.DISCORD_BOT_TOKEN) {
+      if (ctx && sync && botToken(env)) {
         ctx.waitUntil(bulkSyncFutureEvents(env, request.guildId, tz));
       }
-      return jsonResponse({ timezone: row.timezone, discordSync: !!row.discord_sync, botConfigured: !!env.DISCORD_BOT_TOKEN }, 200, env, request);
+      return jsonResponse({ timezone: row.timezone, discordSync: !!row.discord_sync, botConfigured: !!botToken(env) }, 200, env, request);
     } catch (err) {
       console.error('[PUT settings]', err.message);
       return jsonResponse({ error: 'Failed to save settings.' }, 500, env, request);
