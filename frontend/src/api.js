@@ -47,6 +47,10 @@ export const api = {
     list: ()       => request('GET', '/api/availability'),
     save: (slots)  => request('PUT', '/api/availability', { slots }),
   },
+  settings: {
+    get:  ()       => request('GET', '/api/settings'),
+    save: (patch)  => request('PUT', '/api/settings', patch),
+  },
   games: {
     list:   ()            => request('GET',    '/api/games'),
     search: (q)           => request('GET',    `/api/games/search?q=${encodeURIComponent(q)}`, null, true),

@@ -319,6 +319,7 @@ function toEvent(row) {
     proposedByUsername:  row.proposed_by_username,
     attendees:           attendees,
     steamUrl:            row.steam_url    || null,
+    discordEventId:      row.discord_event_id || null,
     createdAt:           row.created_at,
   };
 }
@@ -538,10 +539,139 @@ async function runGameSync(env, onlyGuildId) {
 }
 
 // ============================================================
+// TIMEZONE + DISCORD SCHEDULED EVENTS
+// ============================================================
+
+var DISCORD_API = 'https://discord.com/api/v10';
+
+// Offset in minutes (zone ahead of UTC = positive) of `date` within `timeZone`.
+function tzOffsetMinutes(date, timeZone) {
+  var dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: timeZone, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  var map = {};
+  dtf.formatToParts(date).forEach(function(p) { if (p.type !== 'literal') map[p.type] = parseInt(p.value, 10); });
+  var asUTC = Date.UTC(map.year, map.month - 1, map.day, map.hour % 24, map.minute, map.second);
+  return (asUTC - date.getTime()) / 60000;
+}
+
+// Wall-clock date ('YYYY-MM-DD') + time ('HH:MM') in `timeZone` -> UTC ISO.
+// Two-pass so DST transitions resolve to the correct instant.
+function zonedWallTimeToUtcIso(dateStr, timeStr, timeZone) {
+  var dp = (dateStr || '').split('-').map(Number);
+  var tp = (timeStr || '00:00').split(':').map(Number);
+  if (dp.length < 3 || isNaN(dp[0])) return null;
+  var guess   = Date.UTC(dp[0], dp[1] - 1, dp[2], tp[0] || 0, tp[1] || 0, 0);
+  var off     = tzOffsetMinutes(new Date(guess), timeZone);
+  var refined = guess - off * 60000;
+  off         = tzOffsetMinutes(new Date(refined), timeZone);
+  return new Date(guess - off * 60000).toISOString();
+}
+
+async function getGuildSettings(env, guildId) {
+  var row = null;
+  try { row = await sbSelectOne(env, 'guild_settings', 'guild_id=eq.' + encodeURIComponent(guildId)); }
+  catch (e) { /* table may not exist pre-migration — treat as defaults */ }
+  return {
+    timezone:    (row && row.timezone) || 'Europe/London',
+    discordSync: !!(row && row.discord_sync),
+  };
+}
+
+function discordFetch(env, method, path, body) {
+  return fetch(DISCORD_API + path, {
+    method: method,
+    headers: { 'Authorization': 'Bot ' + env.DISCORD_BOT_TOKEN, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+// Build the Discord scheduled-event payload from a calendar event row.
+function discordEventBody(ev, tz) {
+  var startIso = zonedWallTimeToUtcIso(ev.date, ev.start_time || '20:00', tz);
+  if (!startIso) return null;
+  var startMs = new Date(startIso).getTime();
+  var endIso  = ev.end_time ? zonedWallTimeToUtcIso(ev.date, ev.end_time, tz) : null;
+  // Discord requires end strictly after start. If there's no end time, or the
+  // end resolves on/before the start (e.g. a session running past midnight),
+  // fall back to a 2-hour default rather than sending an invalid range.
+  if (!endIso || new Date(endIso).getTime() <= startMs) {
+    endIso = new Date(startMs + 2 * 3600 * 1000).toISOString();
+  }
+  var who = ev.proposed_by_username === 'game-release'
+    ? 'Game release · via 42p Games'
+    : (ev.proposed_by_name ? 'Proposed by ' + ev.proposed_by_name : '');
+  return {
+    name:                 (ev.activity_name || 'Game night').slice(0, 100),
+    privacy_level:        2,            // GUILD_ONLY
+    scheduled_start_time: startIso,
+    scheduled_end_time:   endIso,
+    entity_type:          3,            // EXTERNAL
+    entity_metadata:      { location: (ev.steam_url ? 'Steam' : 'Online').slice(0, 100) },
+    description:          (who ? who + ' · ' : '') + 'Added from 42p Game Calendar',
+  };
+}
+
+// Create/update the Discord scheduled event for an event row, given resolved
+// settings. Best-effort: future events only, failures swallowed.
+async function syncEventWithSettings(env, guildId, ev, settings) {
+  if (!env.DISCORD_BOT_TOKEN || !ev || !settings.discordSync) return;
+  try {
+    var body = discordEventBody(ev, settings.timezone);
+    if (!body || new Date(body.scheduled_start_time).getTime() <= Date.now()) return;
+
+    if (ev.discord_event_id) {
+      var pr = await discordFetch(env, 'PATCH',
+        '/guilds/' + guildId + '/scheduled-events/' + ev.discord_event_id, body);
+      if (pr.ok) return;
+      if (pr.status !== 404) { console.error('[discord update]', pr.status, await pr.text()); return; }
+      // 404 → it was deleted on Discord; fall through and recreate.
+    }
+    var cr = await discordFetch(env, 'POST', '/guilds/' + guildId + '/scheduled-events', body);
+    if (!cr.ok) { console.error('[discord create]', cr.status, await cr.text()); return; }
+    var created = await cr.json();
+    if (created && created.id) {
+      await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(ev.id), { discord_event_id: created.id });
+    }
+  } catch (err) { console.error('[discord sync]', err.message); }
+}
+
+// Fetches settings then syncs a single event (used on create/move/game-add).
+async function maybeSyncEvent(env, guildId, ev) {
+  if (!env.DISCORD_BOT_TOKEN || !ev) return;
+  var settings = await getGuildSettings(env, guildId);
+  if (!settings.discordSync) return;
+  return syncEventWithSettings(env, guildId, ev, settings);
+}
+
+async function maybeUnsyncEvent(env, guildId, ev) {
+  if (!env.DISCORD_BOT_TOKEN || !ev || !ev.discord_event_id) return;
+  try {
+    await discordFetch(env, 'DELETE', '/guilds/' + guildId + '/scheduled-events/' + ev.discord_event_id);
+  } catch (err) { console.error('[discord unsync]', err.message); }
+}
+
+// When sync is turned on, push existing future events to Discord (capped).
+async function bulkSyncFutureEvents(env, guildId, tz) {
+  if (!env.DISCORD_BOT_TOKEN) return;
+  var settings = { timezone: tz, discordSync: true };
+  try {
+    var today = new Date().toISOString().slice(0, 10);
+    var rows  = await sbSelect(env, 'events',
+      'guild_id=eq.' + encodeURIComponent(guildId) + '&date=gte.' + today + '&order=date.asc');
+    for (var i = 0; i < rows.length && i < 50; i++) {
+      await syncEventWithSettings(env, guildId, rows[i], settings);
+    }
+  } catch (err) { console.error('[discord bulk sync]', err.message); }
+}
+
+// ============================================================
 // REQUEST HANDLER
 // ============================================================
 
-async function handleRequest(request, env) {
+async function handleRequest(request, env, ctx) {
   var url    = new URL(request.url);
   var path   = url.pathname;
   var method = request.method.toUpperCase();
@@ -757,6 +887,7 @@ async function handleRequest(request, env) {
         proposed_by_username: request.session.username, attendees: '[]',
         guild_id: request.guildId,
       });
+      if (ctx) ctx.waitUntil(maybeSyncEvent(env, request.guildId, row));
       return jsonResponse(toEvent(row), 201, env, request);
     } catch (err) {
       console.error('[POST events]', err.message);
@@ -769,7 +900,8 @@ async function handleRequest(request, env) {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b = await request.json();
-      await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(evDateMatch[1]), { date: b.date });
+      var rows = await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(evDateMatch[1]), { date: b.date });
+      if (ctx && rows && rows[0]) ctx.waitUntil(maybeSyncEvent(env, request.guildId, rows[0]));
       return jsonResponse({ ok: true }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to move event.' }, 500, env, request); }
   }
@@ -817,6 +949,7 @@ async function handleRequest(request, env) {
       if (ev.proposed_by !== request.session.userId)
         return jsonResponse({ error: 'You can only remove your own events.' }, 403, env, request);
       await sbDelete(env, 'events', 'id=eq.' + encodeURIComponent(evId));
+      if (ctx) ctx.waitUntil(maybeUnsyncEvent(env, ev.guild_id, ev));
       return jsonResponse({ ok: true }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to delete event.' }, 500, env, request); }
   }
@@ -1050,6 +1183,11 @@ async function handleRequest(request, env) {
       });
       await sbUpdate(env, 'watched_games', 'id=eq.' + encodeURIComponent(saved.id), { calendar_event_id: eventId });
       saved.calendar_event_id = eventId;
+      if (ctx) ctx.waitUntil(maybeSyncEvent(env, request.guildId, {
+        id: eventId, activity_name: b.name, date: eventDate,
+        start_time: null, end_time: null, steam_url: b.steamUrl || null,
+        proposed_by_username: 'game-release', discord_event_id: null,
+      }));
       return jsonResponse(toGame(saved), 201, env, request);
     } catch (err) {
       console.error('[POST games]', err.message);
@@ -1312,6 +1450,38 @@ async function handleRequest(request, env) {
     }
   }
 
+  // ============================================================
+  // GUILD SETTINGS (timezone + Discord event sync)
+  // ============================================================
+
+  if (path === '/api/settings' && method === 'GET') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    var s = await getGuildSettings(env, request.guildId);
+    return jsonResponse({ timezone: s.timezone, discordSync: s.discordSync, botConfigured: !!env.DISCORD_BOT_TOKEN }, 200, env, request);
+  }
+
+  if (path === '/api/settings' && method === 'PUT') {
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
+    try {
+      var b  = await request.json();
+      var tz = (typeof b.timezone === 'string' && b.timezone) ? b.timezone : 'Europe/London';
+      try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch (e) { tz = 'Europe/London'; }
+      var sync = !!b.discordSync;
+      var row  = await sbUpsertOn(env, 'guild_settings', 'guild_id', {
+        guild_id: request.guildId, timezone: tz, discord_sync: sync,
+        updated_at: new Date().toISOString(),
+      });
+      // When sync is switched on, push existing future events to Discord.
+      if (ctx && sync && env.DISCORD_BOT_TOKEN) {
+        ctx.waitUntil(bulkSyncFutureEvents(env, request.guildId, tz));
+      }
+      return jsonResponse({ timezone: row.timezone, discordSync: !!row.discord_sync, botConfigured: !!env.DISCORD_BOT_TOKEN }, 200, env, request);
+    } catch (err) {
+      console.error('[PUT settings]', err.message);
+      return jsonResponse({ error: 'Failed to save settings.' }, 500, env, request);
+    }
+  }
+
   return jsonResponse({ error: 'Not found.' }, 404, env, request);
 }
 
@@ -1320,9 +1490,9 @@ async function handleRequest(request, env) {
 // ============================================================
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
-      return await handleRequest(request, env);
+      return await handleRequest(request, env, ctx);
     } catch (err) {
       console.error('[unhandled]', err.message);
       return new Response(JSON.stringify({ error: 'Internal server error.' }), {

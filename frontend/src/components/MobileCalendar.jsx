@@ -595,7 +595,7 @@ function FreeScreen({ events, onWhosAround }) {
 }
 
 /* ---- Squad / profile screen ---- */
-function SquadScreen({ currentUser, currentGuild, guilds, onGuildSwitch, onSignOut }) {
+function SquadScreen({ currentUser, currentGuild, guilds, onGuildSwitch, onSignOut, onSettings }) {
   return (
     <>
       <div className="aria-hdr" style={{ paddingTop: 8 }}>
@@ -656,6 +656,15 @@ function SquadScreen({ currentUser, currentGuild, guilds, onGuildSwitch, onSignO
           </div>
         </div>
 
+        {onSettings && (
+          <div style={{ marginTop: 20 }}>
+            <button onClick={onSettings}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, height: 44, borderRadius: 'var(--r)', background: 'var(--paper)', boxShadow: 'inset 0 0 0 1px var(--line)', color: 'var(--ink)', fontWeight: 600, fontSize: 14 }}>
+              <i className="ti ti-settings" /> Settings
+            </button>
+          </div>
+        )}
+
         <div style={{ marginTop: 16 }}>
           <button onClick={onSignOut}
             style={{ width: '100%', height: 44, borderRadius: 'var(--r)', background: 'transparent', boxShadow: 'inset 0 0 0 1px var(--line)', color: 'var(--mute)', fontWeight: 600, fontSize: 14 }}>
@@ -674,7 +683,7 @@ export default function MobileCalendar({
   onPropose, onAttendeesChange,
   onToggleDark, onSignOut,
   currentGuild, guilds, onGuildSwitch,
-  onWhosAround,
+  onWhosAround, onSettings,
 }) {
   const [tab, setTab] = useState('cal');
   const [detailEvent, setDetailEvent] = useState(null);
@@ -716,6 +725,7 @@ export default function MobileCalendar({
         <SquadScreen
           currentUser={currentUser} currentGuild={currentGuild}
           guilds={guilds} onGuildSwitch={onGuildSwitch} onSignOut={onSignOut}
+          onSettings={onSettings}
         />
       )}
 

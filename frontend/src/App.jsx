@@ -9,6 +9,7 @@ import GuildPicker      from './components/GuildPicker.jsx';
 import GuildSwitcher    from './components/GuildSwitcher.jsx';
 import MobileCalendar   from './components/MobileCalendar.jsx';
 import WhosAround        from './components/WhosAround.jsx';
+import Settings          from './components/Settings.jsx';
 
 const GUILD_STORAGE_KEY = 'dc_guild';
 
@@ -85,6 +86,7 @@ export default function App() {
   // ── mobile detection ──────────────────────────────────────
   var [isMobile, setIsMobile] = useState(function() { return window.innerWidth < 768; });
   var [showWhosAround, setShowWhosAround] = useState(false);
+  var [showSettings, setShowSettings] = useState(false);
   useEffect(function() {
     function onResize() { setIsMobile(window.innerWidth < 768); }
     window.addEventListener('resize', onResize);
@@ -429,10 +431,14 @@ export default function App() {
         guilds={guilds}
         onGuildSwitch={handleGuildSwitch}
         onWhosAround={function() { setShowWhosAround(true); }}
+        onSettings={function() { setShowSettings(true); }}
       />
       {showWhosAround && (
         <WhosAround currentUser={currentUser} T={T} darkMode={darkMode}
           onClose={function() { setShowWhosAround(false); }} />
+      )}
+      {showSettings && (
+        <Settings T={T} darkMode={darkMode} onClose={function() { setShowSettings(false); }} />
       )}
       </>
     );
@@ -494,6 +500,11 @@ export default function App() {
             style={btn({ padding: '6px 10px', color: T.textSub })} title="See when the squad is free">
             <span style={{ fontSize: 14, lineHeight: 1 }}>🟢</span>
             <span style={{ fontSize: 12 }}>Who's Around</span>
+          </button>
+
+          <button onClick={function() { setShowSettings(true); }} className="dc-hover"
+            style={btn({ padding: '6px 10px', color: T.textSub })} title="Settings">
+            <i className="ti ti-settings" style={{ fontSize: 15 }} aria-hidden="true" />
           </button>
 
           <div style={{ display: 'flex', gap: 3, background: T.bgHover, borderRadius: 8, padding: 3, border: '0.5px solid ' + T.border }}>
@@ -739,6 +750,10 @@ export default function App() {
       {showWhosAround && (
         <WhosAround currentUser={currentUser} T={T} darkMode={darkMode}
           onClose={function() { setShowWhosAround(false); }} />
+      )}
+
+      {showSettings && (
+        <Settings T={T} darkMode={darkMode} onClose={function() { setShowSettings(false); }} />
       )}
     </div>
   );
