@@ -1171,7 +1171,10 @@ async function handleRequest(request, env, ctx) {
         calendar_event_id: null, guild_id: request.guildId,
       });
       var eventId = newId();
-      var eventDate = b.releaseDate || new Date().toISOString().slice(0, 10);
+      var todayDate = todayStr();
+      // Already-released games (past release date) go on today's calendar so
+      // they're visible and playable now; upcoming releases keep their date.
+      var eventDate = (b.releaseDate && b.releaseDate >= todayDate) ? b.releaseDate : todayDate;
       await sbInsert(env, 'events', {
         id: eventId, activity_id: null, activity_name: b.name,
         activity_color: '#7c3aed', activity_icon: b.coverUrl || '🎮',
