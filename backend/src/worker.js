@@ -582,12 +582,21 @@ async function getGuildSettings(env, guildId) {
 
 // Accept the bot token under either casing (the secret may be set as
 // DISCORD_BOT_TOKEN or discord_bot_token).
-function botToken(env) { return env.DISCORD_BOT_TOKEN || env.discord_bot_token || null; }
+function botToken(env) {
+  var t = (env.DISCORD_BOT_TOKEN || env.discord_bot_token || '').trim();
+  // A real Discord bot token is long; treat an obviously-invalid/placeholder
+  // value as not configured so the UI stays honest and we don't spam 400s.
+  return t.length >= 20 ? t : null;
+}
 
 function discordFetch(env, method, path, body) {
   return fetch(DISCORD_API + path, {
     method: method,
-    headers: { 'Authorization': 'Bot ' + botToken(env), 'Content-Type': 'application/json' },
+    headers: {
+      'Authorization': 'Bot ' + botToken(env),
+      'Content-Type':  'application/json',
+      'User-Agent':    'DiscordBot (https://42p.uk, 1.0)',
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
 }
@@ -613,6 +622,7 @@ function discordEventBody(ev, tz) {
     scheduled_start_time: startIso,
     scheduled_end_time:   endIso,
     entity_type:          3,            // EXTERNAL
+    channel_id:           null,         // must be null for EXTERNAL events
     entity_metadata:      { location: (ev.steam_url ? 'Steam' : 'Online').slice(0, 100) },
     description:          (who ? who + ' · ' : '') + 'Added from 42p Game Calendar',
   };
@@ -634,7 +644,11 @@ async function syncEventWithSettings(env, guildId, ev, settings) {
       // 404 → it was deleted on Discord; fall through and recreate.
     }
     var cr = await discordFetch(env, 'POST', '/guilds/' + guildId + '/scheduled-events', body);
-    if (!cr.ok) { console.error('[discord create]', cr.status, await cr.text()); return; }
+    if (!cr.ok) {
+      var ctxt = await cr.text().catch(function() { return ''; });
+      console.error('[discord create]', cr.status, 'ct=' + cr.headers.get('content-type'), 'len=' + ctxt.length, 'resp=' + ctxt);
+      return;
+    }
     var created = await cr.json();
     if (created && created.id) {
       await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(ev.id), { discord_event_id: created.id });
