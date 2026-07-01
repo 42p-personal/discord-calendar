@@ -7,9 +7,9 @@
     "node": ">=18"
   },
   "scripts": {
-    "deploy": "wrangler deploy src/worker.js --name discord-calendar --compatibility-date 2025-01-01",
-    "dev":    "wrangler dev src/worker.js --name discord-calendar --compatibility-date 2025-01-01",
-    "tail":   "wrangler tail --name discord-calendar"
+    "deploy": "wrangler deploy",
+    "dev":    "wrangler dev",
+    "tail":   "wrangler tail"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
