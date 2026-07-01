@@ -863,8 +863,12 @@ async function handleRequest(request, env, ctx) {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b = await request.json();
-      await sbUpdate(env, 'activities', 'id=eq.' + encodeURIComponent(actMatch[1]),
+      // Scope the update to this guild — the ID alone isn't enough, or a
+      // member of one guild could edit another guild's activity by ID.
+      var updRows = await sbUpdate(env, 'activities',
+        'id=eq.' + encodeURIComponent(actMatch[1]) + '&guild_id=eq.' + encodeURIComponent(request.guildId),
         { name: b.name.trim(), icon: b.icon, color: b.color });
+      if (!updRows || !updRows.length) return jsonResponse({ error: 'Activity not found.' }, 404, env, request);
       await sbUpdate(env, 'events',
         'activity_id=eq.' + encodeURIComponent(actMatch[1]) + '&guild_id=eq.' + encodeURIComponent(request.guildId),
         { activity_name: b.name.trim(), activity_color: b.color, activity_icon: b.icon });
@@ -875,7 +879,8 @@ async function handleRequest(request, env, ctx) {
   if (actMatch && method === 'DELETE') {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      await sbDelete(env, 'activities', 'id=eq.' + encodeURIComponent(actMatch[1]));
+      await sbDelete(env, 'activities',
+        'id=eq.' + encodeURIComponent(actMatch[1]) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
       return jsonResponse({ ok: true }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to delete activity.' }, 500, env, request); }
   }
@@ -918,18 +923,24 @@ async function handleRequest(request, env, ctx) {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var b = await request.json();
-      var rows = await sbUpdate(env, 'events', 'id=eq.' + encodeURIComponent(evDateMatch[1]), { date: b.date });
-      if (ctx && rows && rows[0]) ctx.waitUntil(maybeSyncEvent(env, request.guildId, rows[0]));
+      var rows = await sbUpdate(env, 'events',
+        'id=eq.' + encodeURIComponent(evDateMatch[1]) + '&guild_id=eq.' + encodeURIComponent(request.guildId),
+        { date: b.date });
+      if (!rows || !rows.length) return jsonResponse({ error: 'Event not found.' }, 404, env, request);
+      if (ctx) ctx.waitUntil(maybeSyncEvent(env, request.guildId, rows[0]));
       return jsonResponse({ ok: true }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to move event.' }, 500, env, request); }
   }
 
+  // Join/leave require guild membership too — otherwise any signed-in user who
+  // learns an event's ID (any guild) could add/remove themselves as attendee.
   var evJoinMatch = path.match(/^\/api\/events\/([^/]+)\/join$/);
   if (evJoinMatch && method === 'POST') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var evId  = evJoinMatch[1];
-      var evRow = await sbSelectOne(env, 'events', 'id=eq.' + encodeURIComponent(evId));
+      var evRow = await sbSelectOne(env, 'events',
+        'id=eq.' + encodeURIComponent(evId) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
       if (!evRow) return jsonResponse({ error: 'Event not found.' }, 404, env, request);
       var attendees = [];
       try { attendees = JSON.parse(evRow.attendees || '[]'); } catch (e) {}
@@ -944,10 +955,11 @@ async function handleRequest(request, env, ctx) {
 
   var evLeaveMatch = path.match(/^\/api\/events\/([^/]+)\/leave$/);
   if (evLeaveMatch && method === 'POST') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var evId  = evLeaveMatch[1];
-      var evRow = await sbSelectOne(env, 'events', 'id=eq.' + encodeURIComponent(evId));
+      var evRow = await sbSelectOne(env, 'events',
+        'id=eq.' + encodeURIComponent(evId) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
       if (!evRow) return jsonResponse({ error: 'Event not found.' }, 404, env, request);
       var attendees = [];
       try { attendees = JSON.parse(evRow.attendees || '[]'); } catch (e) {}
@@ -959,10 +971,11 @@ async function handleRequest(request, env, ctx) {
 
   var evMatch = path.match(/^\/api\/events\/([^/]+)$/);
   if (evMatch && method === 'DELETE') {
-    var ae = await requireAuth(request, env); if (ae) return ae;
+    var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var evId = evMatch[1];
-      var ev   = await sbSelectOne(env, 'events', 'id=eq.' + encodeURIComponent(evId));
+      var ev   = await sbSelectOne(env, 'events',
+        'id=eq.' + encodeURIComponent(evId) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
       if (!ev) return jsonResponse({ error: 'Event not found.' }, 404, env, request);
       if (ev.proposed_by !== request.session.userId)
         return jsonResponse({ error: 'You can only remove your own events.' }, 403, env, request);
@@ -1220,12 +1233,16 @@ async function handleRequest(request, env, ctx) {
   if (gameMatch && method === 'DELETE') {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      var gameRow = await sbSelectOne(env, 'watched_games', 'id=eq.' + encodeURIComponent(gameMatch[1]));
+      var gameRow = await sbSelectOne(env, 'watched_games',
+        'id=eq.' + encodeURIComponent(gameMatch[1]) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
       if (!gameRow) return jsonResponse({ error: 'Game not found.' }, 404, env, request);
       if (gameRow.calendar_event_id) {
-        await sbDelete(env, 'events', 'id=eq.' + encodeURIComponent(gameRow.calendar_event_id)).catch(function() {});
+        await sbDelete(env, 'events',
+          'id=eq.' + encodeURIComponent(gameRow.calendar_event_id) + '&guild_id=eq.' + encodeURIComponent(request.guildId)
+        ).catch(function() {});
       }
-      await sbDelete(env, 'watched_games', 'id=eq.' + encodeURIComponent(gameMatch[1]));
+      await sbDelete(env, 'watched_games',
+        'id=eq.' + encodeURIComponent(gameMatch[1]) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
       return jsonResponse({ ok: true }, 200, env, request);
     } catch (err) { return jsonResponse({ error: 'Failed to remove game.' }, 500, env, request); }
   }
@@ -1364,7 +1381,8 @@ async function handleRequest(request, env, ctx) {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
       var nomId = voteMatch[1];
-      var nom   = await sbSelectOne(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(nomId));
+      var nom   = await sbSelectOne(env, 'vote_nominations',
+        'id=eq.' + encodeURIComponent(nomId) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
       if (!nom) return jsonResponse({ error: 'Nomination not found.' }, 404, env, request);
       // Lock voting once the round has closed (e.g. its deadline passed).
       var voteRound = await autoCloseExpiredRound(env,
@@ -1421,7 +1439,8 @@ async function handleRequest(request, env, ctx) {
   if (delNomMatch && method === 'DELETE') {
     var ae = await requireAuthAndGuild(request, env); if (ae) return ae;
     try {
-      var nom = await sbSelectOne(env, 'vote_nominations', 'id=eq.' + encodeURIComponent(delNomMatch[1]));
+      var nom = await sbSelectOne(env, 'vote_nominations',
+        'id=eq.' + encodeURIComponent(delNomMatch[1]) + '&guild_id=eq.' + encodeURIComponent(request.guildId));
       if (!nom) return jsonResponse({ error: 'Not found.' }, 404, env, request);
       if (nom.nominated_by !== request.session.userId) {
         return jsonResponse({ error: 'You can only remove your own nominations.' }, 403, env, request);
